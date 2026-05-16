@@ -61,6 +61,7 @@ export default async function DashboardLayout({ children }) {
             </div>
             <SidebarNavItem href="/dashboard" label="Dashboard" exact />
             <SidebarNavItem href="/dashboard/athletes" label="Athletes" count={totalClients} />
+            <SidebarNavItem href="/dashboard/invite" label="Invite client" />
             <SidebarNavItem label="Programs" disabled />
             <SidebarNavItem label="Templates" disabled />
           </div>
