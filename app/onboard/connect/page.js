@@ -109,6 +109,20 @@ function PageShell({ children }) {
 }
 
 // ----------------------------------------------------------------------------
+// Brand mark — single source of truth for the PACT logo image. Future surfaces
+// import from one place; updating the asset file in /public updates everywhere.
+// ----------------------------------------------------------------------------
+function BrandMark({ className = 'w-8 h-8' }) {
+  return (
+    <img
+      src="/pact-mark.png"
+      alt="PACT.Health"
+      className={className}
+    />
+  );
+}
+
+// ----------------------------------------------------------------------------
 // Header — logo + page title + subtitle
 // ----------------------------------------------------------------------------
 function Header() {
@@ -137,9 +151,7 @@ function Header() {
 function Logo() {
   return (
     <div className="flex items-center gap-2.5 mb-6 sm:mb-8">
-      <div className="w-8 h-8 bg-[#0A2540] rounded-[4px] flex items-center justify-center">
-        <span className="font-['Montserrat'] font-extrabold text-white text-lg leading-none">P</span>
-      </div>
+      <BrandMark className="w-9 h-9" />
       <span className="font-['Montserrat'] font-extrabold text-[#0A2540] text-base tracking-wide">
         PACT<span className="text-[#D92D20]">.</span>HEALTH
       </span>
@@ -235,8 +247,8 @@ function MissingInvite() {
     <PageShell>
       <div className="flex items-center justify-center min-h-[60vh]">
         <div className="bg-white rounded-[6px] p-8 max-w-md w-full text-center shadow-[0_4px_10px_rgba(10,37,64,0.05)]">
-          <div className="w-12 h-12 bg-[#0A2540] rounded-[4px] flex items-center justify-center mx-auto mb-6">
-            <span className="font-['Montserrat'] font-extrabold text-white text-2xl leading-none">P</span>
+          <div className="mb-6 flex justify-center">
+            <BrandMark className="w-14 h-14" />
           </div>
           <h1 className="font-['Montserrat'] font-extrabold text-2xl text-[#0A2540] uppercase tracking-tight leading-[1.1] mb-3">
             Something's missing.
