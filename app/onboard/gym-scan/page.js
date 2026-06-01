@@ -3,13 +3,16 @@
 /**
  * /onboard/gym-scan?clientId=<uuid>
  *
- * Photo-based gym equipment scanner. User uploads a photo, we resize it
- * client-side to Claude Vision's recommended 1568px max edge, base64-encode,
- * POST to /api/gym-scan, and display the identified equipment.
+ * Photo-based gym equipment scanner with user validation.
  *
- * V0 scope: single photo, no persistence, read-only result display.
- * Next session: multi-photo, edit/confirm, write to clients.equipment_list,
- * feed into Program Builder's equipment-aware exercise filtering.
+ * Flow:
+ *   upload photo -> client-side resize to 1568px max edge -> POST /api/gym-scan
+ *   -> Claude Vision returns equipment list -> user reviews each item (default
+ *   all ticked) -> user unticks false positives -> Confirm -> locked state.
+ *
+ * V0 scope: single photo, persistence still TBD next session (currently the
+ * confirmed list lives only in component state). Multi-photo, persistence
+ * to clients.equipment_list, and Program Builder integration come next.
  */
 
 import { Suspense, useRef, useState } from 'react';
@@ -35,6 +38,7 @@ function ScanContent() {
   const [scanning, setScanning] = useState(false);
   const [equipment, setEquipment] = useState(null);
   const [error, setError] = useState(null);
+  const [confirmedList, setConfirmedList] = useState(null);
 
   if (!clientId) {
     return <MissingInvite />;
@@ -44,25 +48,22 @@ function ScanContent() {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
     setPreviewUrl(URL.createObjectURL(file));
     setEquipment(null);
     setError(null);
+    setConfirmedList(null);
     setScanning(true);
 
     try {
       const { base64, mediaType } = await resizeAndEncode(file, MAX_DIMENSION);
-
       const res = await fetch('/api/gym-scan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ imageBase64: base64, mediaType }),
       });
       const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.error || 'Scan failed. Try again.');
-      }
-
+      if (!res.ok) throw new Error(data.error || 'Scan failed. Try again.');
       setEquipment(data.equipment || []);
     } catch (err) {
       setError(err.message);
@@ -78,7 +79,15 @@ function ScanContent() {
     setEquipment(null);
     setError(null);
     setScanning(false);
+    setConfirmedList(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
+  }
+
+  function handleConfirm(confirmed) {
+    setConfirmedList(confirmed);
+    // Next session: POST to /api/clients/[id]/equipment to persist.
+    // For now the confirmed list lives in component state — proves the UX.
+    console.log('[gym-scan] confirmed equipment for client', clientId, confirmed);
   }
 
   return (
@@ -96,7 +105,17 @@ function ScanContent() {
 
           {error && <ErrorBanner message={error} onRetry={reset} />}
 
-          {equipment !== null && !scanning && <EquipmentResult items={equipment} onReset={reset} />}
+          {equipment !== null && !scanning && !confirmedList && (
+            <EquipmentReview items={equipment} onConfirm={handleConfirm} onReset={reset} />
+          )}
+
+          {confirmedList && (
+            <ConfirmedState
+              count={confirmedList.length}
+              onScanAnother={reset}
+              onEdit={() => setConfirmedList(null)}
+            />
+          )}
         </div>
       )}
     </PageShell>
@@ -104,38 +123,28 @@ function ScanContent() {
 }
 
 // ----------------------------------------------------------------------------
-// Image resize + base64 encode (client-side). Resize to Claude Vision's
-// recommended max edge for best results, JPEG-encode with quality compression
-// to keep upload payload small.
+// Image resize + base64 encode (client-side).
 // ----------------------------------------------------------------------------
 async function resizeAndEncode(file, maxDim) {
   return new Promise((resolve, reject) => {
     const objectUrl = URL.createObjectURL(file);
     const img = new Image();
-
     img.onload = () => {
       const scale = Math.min(maxDim / img.naturalWidth, maxDim / img.naturalHeight, 1);
       const w = Math.round(img.naturalWidth * scale);
       const h = Math.round(img.naturalHeight * scale);
-
       const canvas = document.createElement('canvas');
       canvas.width = w;
       canvas.height = h;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0, w, h);
-
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
       const dataUrl = canvas.toDataURL('image/jpeg', JPEG_QUALITY);
-      const base64 = dataUrl.split(',')[1];
-
       URL.revokeObjectURL(objectUrl);
-      resolve({ base64, mediaType: 'image/jpeg' });
+      resolve({ base64: dataUrl.split(',')[1], mediaType: 'image/jpeg' });
     };
-
     img.onerror = () => {
       URL.revokeObjectURL(objectUrl);
       reject(new Error('Could not read that image. Try another photo.'));
     };
-
     img.src = objectUrl;
   });
 }
@@ -148,17 +157,14 @@ function Header() {
   return (
     <header className="mb-8 sm:mb-10">
       <Logo />
-
       <div className="inline-block pt-2 border-t-2 border-[#D92D20] mb-5">
         <span className="font-['Inter'] font-semibold text-[11px] text-[#D92D20] uppercase tracking-[2.5px]">
           Scan Your Space
         </span>
       </div>
-
       <h1 className="font-['Montserrat'] font-extrabold text-3xl sm:text-4xl lg:text-5xl text-[#0A2540] uppercase tracking-tight leading-[0.95] mb-4">
         Show us your<br />gym.
       </h1>
-
       <p className="font-['Inter'] text-base text-[#4A4A4A] leading-relaxed max-w-xl">
         One photo. PAX will spot the equipment, and your PT will only ever
         prescribe sessions you can actually do with what you've got.
@@ -220,7 +226,27 @@ function ScanOverlay() {
   );
 }
 
-function EquipmentResult({ items, onReset }) {
+// ----------------------------------------------------------------------------
+// Equipment review (with selection)
+// ----------------------------------------------------------------------------
+function EquipmentReview({ items, onConfirm, onReset }) {
+  // Pre-tick everything — AI's usually right, user just removes false positives.
+  // Index-based selection keeps it simple for V0; if we ever de-dupe across
+  // multiple photos later, this becomes a stable id keyed map.
+  const [selectedIdx, setSelectedIdx] = useState(() => new Set(items.map((_, i) => i)));
+
+  function toggle(index) {
+    setSelectedIdx(prev => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  }
+
+  const selectedCount = selectedIdx.size;
+  const selectedItems = items.filter((_, i) => selectedIdx.has(i));
+
   return (
     <div className="bg-white rounded-[6px] p-6 sm:p-8 shadow-[0_4px_10px_rgba(10,37,64,0.05)] border border-[#E2E6EB]">
       <div className="inline-block pt-2 border-t-2 border-[#D92D20] mb-4">
@@ -231,28 +257,65 @@ function EquipmentResult({ items, onReset }) {
 
       {items.length > 0 ? (
         <>
-          <h2 className="font-['Montserrat'] font-extrabold text-2xl sm:text-3xl text-[#0A2540] uppercase tracking-tight leading-[1.05] mb-5">
+          <h2 className="font-['Montserrat'] font-extrabold text-2xl sm:text-3xl text-[#0A2540] uppercase tracking-tight leading-[1.05] mb-2">
             {items.length} {items.length === 1 ? 'item' : 'items'} spotted.
           </h2>
+          <p className="font-['Inter'] text-[#4A4A4A] text-sm mb-6">
+            Tap to untick anything we got wrong. Hit confirm when it matches your gym.
+          </p>
 
           <ul className="space-y-2 mb-6">
-            {items.map((item, i) => (
-              <li
-                key={i}
-                className="flex items-center gap-3 bg-[#F4F6F8] rounded-[4px] pl-4 pr-3 py-3 border-l-[3px] border-[#0A2540]"
-              >
-                <span className="flex-1 font-['Inter'] font-medium text-[#0A2540] text-sm leading-snug">
-                  {item.name}
-                </span>
-                {item.quantity > 1 && (
-                  <span className="font-['Inter'] font-bold text-[#0A2540] text-xs bg-white rounded-[4px] px-2 py-1 border border-[#E2E6EB]">
-                    ×{item.quantity}
-                  </span>
-                )}
-                <ConfidencePill level={item.confidence} />
-              </li>
-            ))}
+            {items.map((item, i) => {
+              const checked = selectedIdx.has(i);
+              return (
+                <li key={i}>
+                  <button
+                    type="button"
+                    onClick={() => toggle(i)}
+                    aria-pressed={checked}
+                    className={[
+                      'group w-full flex items-center gap-3 rounded-[4px] pl-3 pr-3 py-3 text-left',
+                      'border-l-[3px] transition-all duration-150',
+                      checked
+                        ? 'bg-[#F4F6F8] border-[#0A2540]'
+                        : 'bg-white border-[#E2E6EB] opacity-55',
+                    ].join(' ')}
+                  >
+                    <Checkbox checked={checked} />
+                    <span className={[
+                      'flex-1 font-[\'Inter\'] font-medium text-sm leading-snug',
+                      checked ? 'text-[#0A2540]' : 'text-[#4A4A4A] line-through decoration-1',
+                    ].join(' ')}>
+                      {item.name}
+                    </span>
+                    {item.quantity > 1 && (
+                      <span className="font-['Inter'] font-bold text-[#0A2540] text-xs bg-white rounded-[4px] px-2 py-1 border border-[#E2E6EB]">
+                        ×{item.quantity}
+                      </span>
+                    )}
+                    <ConfidencePill level={item.confidence} />
+                  </button>
+                </li>
+              );
+            })}
           </ul>
+
+          <div className="flex gap-3 flex-wrap">
+            <button
+              onClick={() => onConfirm(selectedItems)}
+              disabled={selectedCount === 0}
+              className="inline-flex items-center gap-2 bg-[#D92D20] hover:bg-[#B0241A] disabled:opacity-40 disabled:cursor-not-allowed text-white font-['Inter'] font-semibold text-[13px] uppercase tracking-[0.4px] px-6 py-3.5 rounded-[6px] transition-colors"
+            >
+              Confirm {selectedCount > 0 ? `${selectedCount} ${selectedCount === 1 ? 'item' : 'items'}` : 'equipment'}
+              <span aria-hidden="true">→</span>
+            </button>
+            <button
+              onClick={onReset}
+              className="font-['Inter'] font-semibold text-[13px] text-[#0A2540] hover:text-[#D92D20] uppercase tracking-[0.4px] px-4 py-3.5 transition-colors"
+            >
+              Scan another photo
+            </button>
+          </div>
         </>
       ) : (
         <>
@@ -262,17 +325,34 @@ function EquipmentResult({ items, onReset }) {
           <p className="font-['Inter'] text-[#4A4A4A] text-sm mb-6">
             Try a wider shot with the equipment clearly in frame.
           </p>
+          <button
+            onClick={onReset}
+            className="inline-flex items-center gap-2 bg-[#D92D20] hover:bg-[#B0241A] text-white font-['Inter'] font-semibold text-[13px] uppercase tracking-[0.4px] px-6 py-3.5 rounded-[6px] transition-colors"
+          >
+            Scan another photo
+            <span aria-hidden="true">→</span>
+          </button>
         </>
       )}
-
-      <button
-        onClick={onReset}
-        className="inline-flex items-center gap-2 bg-[#D92D20] hover:bg-[#B0241A] text-white font-['Inter'] font-semibold text-[13px] uppercase tracking-[0.4px] px-6 py-3.5 rounded-[6px] transition-colors"
-      >
-        Scan another photo
-        <span aria-hidden="true">→</span>
-      </button>
     </div>
+  );
+}
+
+function Checkbox({ checked }) {
+  return (
+    <span
+      className={[
+        'flex-shrink-0 w-6 h-6 rounded-[4px] flex items-center justify-center transition-colors',
+        checked ? 'bg-[#0A2540]' : 'bg-white border border-[#E2E6EB]',
+      ].join(' ')}
+      aria-hidden="true"
+    >
+      {checked && (
+        <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3.5">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+        </svg>
+      )}
+    </span>
   );
 }
 
@@ -283,9 +363,54 @@ function ConfidencePill({ level }) {
     low:    'bg-[#8A95A3] text-white',
   };
   return (
-    <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-[3px] ${styles[level] || styles.medium}`}>
+    <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-[3px] flex-shrink-0 ${styles[level] || styles.medium}`}>
       {level}
     </span>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Confirmed state — locked in, with options to edit back or scan another
+// ----------------------------------------------------------------------------
+function ConfirmedState({ count, onScanAnother, onEdit }) {
+  return (
+    <div className="bg-white rounded-[6px] p-6 sm:p-8 shadow-[0_4px_10px_rgba(10,37,64,0.05)] border border-[#E2E6EB] text-center">
+      <div className="w-14 h-14 bg-[#0A2540] rounded-full flex items-center justify-center mx-auto mb-6">
+        <svg className="w-7 h-7 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3" aria-hidden="true">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+        </svg>
+      </div>
+
+      <div className="inline-block pt-2 border-t-2 border-[#D92D20] mb-4">
+        <span className="font-['Inter'] font-semibold text-[11px] text-[#D92D20] uppercase tracking-[2.5px]">
+          Equipment locked in
+        </span>
+      </div>
+
+      <h2 className="font-['Montserrat'] font-extrabold text-2xl sm:text-3xl text-[#0A2540] uppercase tracking-tight leading-[1.05] mb-3">
+        {count} {count === 1 ? 'item' : 'items'} confirmed.
+      </h2>
+
+      <p className="font-['Inter'] text-[#4A4A4A] text-sm sm:text-base leading-relaxed mb-7 max-w-md mx-auto">
+        Your PT will only prescribe sessions you can actually do with what you've got.
+      </p>
+
+      <div className="flex flex-col sm:flex-row gap-3 justify-center">
+        <button
+          onClick={onScanAnother}
+          className="inline-flex items-center justify-center gap-2 bg-[#D92D20] hover:bg-[#B0241A] text-white font-['Inter'] font-semibold text-[13px] uppercase tracking-[0.4px] px-6 py-3.5 rounded-[6px] transition-colors"
+        >
+          Scan another photo
+          <span aria-hidden="true">→</span>
+        </button>
+        <button
+          onClick={onEdit}
+          className="font-['Inter'] font-semibold text-[13px] text-[#0A2540] hover:text-[#D92D20] uppercase tracking-[0.4px] px-4 py-3.5 transition-colors"
+        >
+          Edit selections
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -309,8 +434,8 @@ function ErrorBanner({ message, onRetry }) {
 }
 
 // ----------------------------------------------------------------------------
-// Shared chrome (inlined for now — extract to app/_components/Brand.js next
-// session when we have four pages using the same pattern).
+// Shared chrome (inlined — extract to app/_components/Brand.js when we
+// build the fourth+ surface that uses the same pattern, next session).
 // ----------------------------------------------------------------------------
 
 function PageShell({ children }) {
