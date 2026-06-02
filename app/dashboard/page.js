@@ -64,12 +64,17 @@ export default async function MyDayPage() {
     .eq('auth_user_id', user.id)
     .maybeSingle();
 
-  // Clients
-  const { data: clients = [] } = await service
-    .from('clients')
-    .select('id, name, status, current_weight, start_weight, target_weight, goal, gym, last_seen_at')
-    .eq('pt_id', pt?.id || null)
-    .order('name');
+// Clients — skip the query entirely if no PT row, and always default to []
+  // (Supabase returns data: null on error, which default destructuring doesn't catch).
+  let clients = [];
+  if (pt?.id) {
+    const { data } = await service
+      .from('clients')
+      .select('id, name, status, current_weight, start_weight, target_weight, goal, gym, last_seen_at')
+      .eq('pt_id', pt.id)
+      .order('name');
+    clients = data || [];
+  }
 
   const clientIds = clients.map(c => c.id);
   const clientById = Object.fromEntries(clients.map(c => [c.id, c]));
