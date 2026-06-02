@@ -1,13 +1,13 @@
 /**
  * /api/clients/[clientId]/programs
  *
- * POST  — Create a new program for a client. Coach_id is derived from the
- *         client's own coach_id, not passed in the body.
+ * POST  — Create a new program for a client. pt_id is derived from the
+ *         client's own pt_id, not passed in the body.
  * GET   — List all programs for a client, bundled with minimal client info
  *         so the PT-side list page only needs one fetch.
  *
- * Auth model is the same as our other routes for now — client must exist.
- * Tightening (coach must own client) is post-pilot hardening.
+ * Auth model: client must exist (same as our other routes for V1).
+ * Tightening (PT must own client) is post-pilot hardening.
  */
 
 import { NextResponse } from 'next/server';
@@ -17,8 +17,6 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY,
 );
-
-const VALID_STATUSES = new Set(['draft', 'active', 'archived']);
 
 export async function POST(req, context) {
   const params = await context.params;
@@ -43,20 +41,21 @@ export async function POST(req, context) {
     return NextResponse.json({ error: 'Name is too long.' }, { status: 400 });
   }
 
-  // Lookup the client — also need its coach_id to associate the program
+  // Lookup the client — also need its pt_id to associate the program
   const { data: client, error: clientErr } = await supabase
     .from('clients')
-    .select('id, name, coach_id')
+    .select('id, name, pt_id')
     .eq('id', clientId)
     .maybeSingle();
 
   if (clientErr || !client) {
+    console.error('[programs] client lookup failed', clientErr);
     return NextResponse.json({ error: 'Client not found.' }, { status: 404 });
   }
 
   const insert = {
     client_id: client.id,
-    coach_id: client.coach_id,
+    pt_id: client.pt_id,
     name,
     status: 'draft',
     start_date: body?.start_date || null,
