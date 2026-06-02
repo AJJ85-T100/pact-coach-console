@@ -3,16 +3,16 @@
 /**
  * /onboard/gym-scan?clientId=<uuid>
  *
- * Photo-based gym equipment scanner with user validation.
+ * Photo-based gym equipment scanner with user validation + persistence.
  *
  * Flow:
  *   upload photo -> client-side resize to 1568px max edge -> POST /api/gym-scan
  *   -> Claude Vision returns equipment list -> user reviews each item (default
- *   all ticked) -> user unticks false positives -> Confirm -> locked state.
+ *   all ticked) -> user unticks false positives -> Confirm -> POST to
+ *   /api/clients/[id]/equipment to persist -> locked state.
  *
- * V0 scope: single photo, persistence still TBD next session (currently the
- * confirmed list lives only in component state). Multi-photo, persistence
- * to clients.equipment_list, and Program Builder integration come next.
+ * V1 scope: single photo, replace-semantics (each confirm overwrites the
+ * client's equipment_list). Multi-photo dedup + edit happens next.
  */
 
 import { Suspense, useRef, useState } from 'react';
@@ -37,8 +37,10 @@ function ScanContent() {
   const [previewUrl, setPreviewUrl] = useState(null);
   const [scanning, setScanning] = useState(false);
   const [equipment, setEquipment] = useState(null);
-  const [error, setError] = useState(null);
+  const [scanError, setScanError] = useState(null);
   const [confirmedList, setConfirmedList] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(null);
 
   if (!clientId) {
     return <MissingInvite />;
@@ -51,7 +53,8 @@ function ScanContent() {
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setPreviewUrl(URL.createObjectURL(file));
     setEquipment(null);
-    setError(null);
+    setScanError(null);
+    setSaveError(null);
     setConfirmedList(null);
     setScanning(true);
 
@@ -66,7 +69,7 @@ function ScanContent() {
       if (!res.ok) throw new Error(data.error || 'Scan failed. Try again.');
       setEquipment(data.equipment || []);
     } catch (err) {
-      setError(err.message);
+      setScanError(err.message);
       setEquipment(null);
     } finally {
       setScanning(false);
@@ -77,17 +80,33 @@ function ScanContent() {
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setPreviewUrl(null);
     setEquipment(null);
-    setError(null);
+    setScanError(null);
+    setSaveError(null);
     setScanning(false);
     setConfirmedList(null);
+    setSaving(false);
     if (fileInputRef.current) fileInputRef.current.value = '';
   }
 
-  function handleConfirm(confirmed) {
-    setConfirmedList(confirmed);
-    // Next session: POST to /api/clients/[id]/equipment to persist.
-    // For now the confirmed list lives in component state — proves the UX.
-    console.log('[gym-scan] confirmed equipment for client', clientId, confirmed);
+  async function handleConfirm(confirmed) {
+    setSaving(true);
+    setSaveError(null);
+
+    try {
+      const res = await fetch(`/api/clients/${clientId}/equipment`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ equipment: confirmed }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Save failed. Try again.');
+      // Use the server's echoed-back list (it's been sanitized) rather than client copy
+      setConfirmedList(data.equipment || confirmed);
+    } catch (err) {
+      setSaveError(err.message);
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -103,10 +122,16 @@ function ScanContent() {
             {scanning && <ScanOverlay />}
           </div>
 
-          {error && <ErrorBanner message={error} onRetry={reset} />}
+          {scanError && <ErrorBanner message={scanError} onRetry={reset} retryLabel="Start over" />}
 
           {equipment !== null && !scanning && !confirmedList && (
-            <EquipmentReview items={equipment} onConfirm={handleConfirm} onReset={reset} />
+            <EquipmentReview
+              items={equipment}
+              onConfirm={handleConfirm}
+              onReset={reset}
+              saving={saving}
+              saveError={saveError}
+            />
           )}
 
           {confirmedList && (
@@ -227,15 +252,13 @@ function ScanOverlay() {
 }
 
 // ----------------------------------------------------------------------------
-// Equipment review (with selection)
+// Equipment review (with selection + save)
 // ----------------------------------------------------------------------------
-function EquipmentReview({ items, onConfirm, onReset }) {
-  // Pre-tick everything — AI's usually right, user just removes false positives.
-  // Index-based selection keeps it simple for V0; if we ever de-dupe across
-  // multiple photos later, this becomes a stable id keyed map.
+function EquipmentReview({ items, onConfirm, onReset, saving, saveError }) {
   const [selectedIdx, setSelectedIdx] = useState(() => new Set(items.map((_, i) => i)));
 
   function toggle(index) {
+    if (saving) return; // lock selection during save
     setSelectedIdx(prev => {
       const next = new Set(prev);
       if (next.has(index)) next.delete(index);
@@ -272,10 +295,12 @@ function EquipmentReview({ items, onConfirm, onReset }) {
                   <button
                     type="button"
                     onClick={() => toggle(i)}
+                    disabled={saving}
                     aria-pressed={checked}
                     className={[
                       'group w-full flex items-center gap-3 rounded-[4px] pl-3 pr-3 py-3 text-left',
                       'border-l-[3px] transition-all duration-150',
+                      'disabled:cursor-not-allowed',
                       checked
                         ? 'bg-[#F4F6F8] border-[#0A2540]'
                         : 'bg-white border-[#E2E6EB] opacity-55',
@@ -300,18 +325,36 @@ function EquipmentReview({ items, onConfirm, onReset }) {
             })}
           </ul>
 
-          <div className="flex gap-3 flex-wrap">
+          {saveError && (
+            <div className="mb-5 p-3 border-l-[3px] border-[#D92D20] bg-[#F4F6F8] rounded-[4px]">
+              <p className="font-['Inter'] text-sm text-[#0A2540]">
+                <span className="font-bold">Couldn't save:</span> {saveError}
+              </p>
+            </div>
+          )}
+
+          <div className="flex gap-3 flex-wrap items-center">
             <button
               onClick={() => onConfirm(selectedItems)}
-              disabled={selectedCount === 0}
+              disabled={selectedCount === 0 || saving}
               className="inline-flex items-center gap-2 bg-[#D92D20] hover:bg-[#B0241A] disabled:opacity-40 disabled:cursor-not-allowed text-white font-['Inter'] font-semibold text-[13px] uppercase tracking-[0.4px] px-6 py-3.5 rounded-[6px] transition-colors"
             >
-              Confirm {selectedCount > 0 ? `${selectedCount} ${selectedCount === 1 ? 'item' : 'items'}` : 'equipment'}
-              <span aria-hidden="true">→</span>
+              {saving ? (
+                <>
+                  <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  Confirm {selectedCount > 0 ? `${selectedCount} ${selectedCount === 1 ? 'item' : 'items'}` : 'equipment'}
+                  <span aria-hidden="true">→</span>
+                </>
+              )}
             </button>
             <button
               onClick={onReset}
-              className="font-['Inter'] font-semibold text-[13px] text-[#0A2540] hover:text-[#D92D20] uppercase tracking-[0.4px] px-4 py-3.5 transition-colors"
+              disabled={saving}
+              className="font-['Inter'] font-semibold text-[13px] text-[#0A2540] hover:text-[#D92D20] disabled:opacity-40 disabled:cursor-not-allowed uppercase tracking-[0.4px] px-4 py-3.5 transition-colors"
             >
               Scan another photo
             </button>
@@ -370,7 +413,7 @@ function ConfidencePill({ level }) {
 }
 
 // ----------------------------------------------------------------------------
-// Confirmed state — locked in, with options to edit back or scan another
+// Confirmed state — locked in, persisted, with options to edit back or scan another
 // ----------------------------------------------------------------------------
 function ConfirmedState({ count, onScanAnother, onEdit }) {
   return (
@@ -383,7 +426,7 @@ function ConfirmedState({ count, onScanAnother, onEdit }) {
 
       <div className="inline-block pt-2 border-t-2 border-[#D92D20] mb-4">
         <span className="font-['Inter'] font-semibold text-[11px] text-[#D92D20] uppercase tracking-[2.5px]">
-          Equipment locked in
+          Equipment saved
         </span>
       </div>
 
@@ -414,7 +457,7 @@ function ConfirmedState({ count, onScanAnother, onEdit }) {
   );
 }
 
-function ErrorBanner({ message, onRetry }) {
+function ErrorBanner({ message, onRetry, retryLabel = 'Try again' }) {
   return (
     <div className="p-4 bg-white border-l-[3px] border-[#D92D20] rounded-[4px] shadow-[0_4px_10px_rgba(10,37,64,0.05)] flex items-start justify-between gap-3">
       <div className="flex-1">
@@ -427,15 +470,15 @@ function ErrorBanner({ message, onRetry }) {
         onClick={onRetry}
         className="font-['Inter'] font-semibold text-[11px] text-[#D92D20] uppercase tracking-[1.5px] hover:text-[#B0241A] transition-colors flex-shrink-0"
       >
-        Try again
+        {retryLabel}
       </button>
     </div>
   );
 }
 
 // ----------------------------------------------------------------------------
-// Shared chrome (inlined — extract to app/_components/Brand.js when we
-// build the fourth+ surface that uses the same pattern, next session).
+// Shared chrome (inlined — extract to app/_components/Brand.js when we need
+// it on a fifth surface).
 // ----------------------------------------------------------------------------
 
 function PageShell({ children }) {
