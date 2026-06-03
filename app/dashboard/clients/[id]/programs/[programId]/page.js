@@ -31,7 +31,7 @@ export default function ProgramEditorPage() {
     let cancelled = false;
     async function load() {
       try {
-        const res = await fetch(`/api/programs/${programId}`);
+        const res = await fetch(`/api/programs/${programId}`, { cache: 'no-store' });
         const json = await res.json();
         if (!res.ok) throw new Error(json.error || 'Failed to load program.');
         if (!cancelled) {
@@ -47,7 +47,7 @@ export default function ProgramEditorPage() {
   }, [programId]);
 
   async function refresh() {
-    const res = await fetch(`/api/programs/${programId}`);
+    const res = await fetch(`/api/programs/${programId}`, { cache: 'no-store' });
     const json = await res.json();
     if (res.ok) setData(json);
   }
