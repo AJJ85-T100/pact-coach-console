@@ -1,14 +1,13 @@
 /**
  * /api/program-sessions/[sessionId]
  *
- * PATCH — Update a session. Used for editing session metadata (name, week,
- *         day_index, notes) and for replacing the exercises JSONB array
- *         when adding/editing/removing exercises.
+ * PATCH  — Update a session. Used for editing session metadata (name, week,
+ *          day_index, notes) and for replacing the exercises JSONB array
+ *          when adding/editing/removing exercises.
+ * DELETE — Remove a session and all its exercises.
  *
  * Exercises are sent as a complete replacement array — simpler than diffing
  * and matches the JSONB-as-blob pattern.
- *
- * Uses the shared no-cache admin client (lib/supabase/admin.js).
  */
 
 import { NextResponse } from 'next/server';
@@ -72,6 +71,27 @@ export async function PATCH(req, context) {
   }
 
   return NextResponse.json({ session });
+}
+
+export async function DELETE(_req, context) {
+  const params = await context.params;
+  const sessionId = params?.sessionId;
+
+  if (!sessionId || typeof sessionId !== 'string') {
+    return NextResponse.json({ error: 'sessionId required.' }, { status: 400 });
+  }
+
+  const { error } = await supabase
+    .from('program_sessions')
+    .delete()
+    .eq('id', sessionId);
+
+  if (error) {
+    console.error('[session] delete failed', error);
+    return NextResponse.json({ error: 'Could not delete session.' }, { status: 500 });
+  }
+
+  return NextResponse.json({ ok: true });
 }
 
 function sanitizeExercises(exercises) {
