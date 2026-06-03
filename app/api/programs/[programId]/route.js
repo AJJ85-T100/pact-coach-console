@@ -58,9 +58,16 @@ export async function GET(_req, context) {
     .eq('id', programRes.data.client_id)
     .maybeSingle();
 
-  return NextResponse.json({
-    program: programRes.data,
-    sessions: sessionsRes.data || [],
-    client: client || null,
-  });
-}
+    return NextResponse.json(
+    {
+      program: programRes.data,
+      sessions: sessionsRes.data || [],
+      client: client || null,
+    },
+    {
+      headers: {
+        'Cache-Control': 'no-store, max-age=0, must-revalidate',
+      },
+    }
+  );
+  }
