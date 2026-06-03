@@ -6,17 +6,15 @@
  * GET   — List all programs for a client, bundled with minimal client info
  *         so the PT-side list page only needs one fetch.
  *
- * Auth model: client must exist (same as our other routes for V1).
- * Tightening (PT must own client) is post-pilot hardening.
+ * Uses the shared no-cache admin client from lib/supabase/admin.js so
+ * fresh data lands on every GET (see Wave 2a debug notes).
  */
 
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { unstable_noStore as noStore } from 'next/cache';
+import { supabaseAdmin as supabase } from '@/lib/supabase/admin';
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY,
-);
+export const dynamic = 'force-dynamic';
 
 export async function POST(req, context) {
   const params = await context.params;
@@ -41,7 +39,6 @@ export async function POST(req, context) {
     return NextResponse.json({ error: 'Name is too long.' }, { status: 400 });
   }
 
-  // Lookup the client — also need its pt_id to associate the program
   const { data: client, error: clientErr } = await supabase
     .from('clients')
     .select('id, name, pt_id')
@@ -78,6 +75,7 @@ export async function POST(req, context) {
 }
 
 export async function GET(_req, context) {
+  noStore();
   const params = await context.params;
   const clientId = params?.clientId;
 
@@ -85,7 +83,6 @@ export async function GET(_req, context) {
     return NextResponse.json({ error: 'clientId required.' }, { status: 400 });
   }
 
-  // Bundle client info with the programs list — saves the dashboard a second fetch
   const [{ data: client, error: clientErr }, { data: programs, error: programsErr }] = await Promise.all([
     supabase
       .from('clients')
@@ -107,8 +104,15 @@ export async function GET(_req, context) {
     return NextResponse.json({ error: 'Could not load programs.' }, { status: 500 });
   }
 
-  return NextResponse.json({
-    client,
-    programs: programs || [],
-  });
+  return NextResponse.json(
+    {
+      client,
+      programs: programs || [],
+    },
+    {
+      headers: {
+        'Cache-Control': 'no-store, max-age=0, must-revalidate',
+      },
+    },
+  );
 }

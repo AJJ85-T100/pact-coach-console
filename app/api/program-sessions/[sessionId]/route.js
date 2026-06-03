@@ -7,15 +7,14 @@
  *
  * Exercises are sent as a complete replacement array — simpler than diffing
  * and matches the JSONB-as-blob pattern.
+ *
+ * Uses the shared no-cache admin client (lib/supabase/admin.js).
  */
 
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { supabaseAdmin as supabase } from '@/lib/supabase/admin';
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY,
-);
+export const dynamic = 'force-dynamic';
 
 export async function PATCH(req, context) {
   const params = await context.params;
@@ -32,7 +31,6 @@ export async function PATCH(req, context) {
     return NextResponse.json({ error: 'Invalid JSON.' }, { status: 400 });
   }
 
-  // Build patch object — only allow specific fields
   const patch = {};
   if (typeof body?.name === 'string') {
     const trimmed = body.name.trim();
@@ -76,10 +74,6 @@ export async function PATCH(req, context) {
   return NextResponse.json({ session });
 }
 
-/**
- * Normalises and validates the exercises array.
- * Drops invalid entries; clamps numeric fields to sane ranges.
- */
 function sanitizeExercises(exercises) {
   return exercises
     .filter((e) => e && typeof e === 'object' && typeof e.name === 'string' && e.name.trim())

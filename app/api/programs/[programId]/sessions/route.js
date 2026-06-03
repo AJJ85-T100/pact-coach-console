@@ -1,19 +1,24 @@
 /**
- * /api/programs/[programId]/sessions
+ * /api/programs/[programId]
  *
- * POST — Add a session to a program. Initial exercises array is empty;
- *        exercises are added via PATCH on /api/program-sessions/[sessionId].
+ * GET — Load a program with all its sessions, plus minimal client info
+ *       for the editor page breadcrumb.
+ *
+ * Sessions are sorted by week_number then day_index so the editor renders
+ * them in training order without needing to sort client-side.
+ *
+ * Uses the shared no-cache admin client (lib/supabase/admin.js) so the
+ * fetch cache doesn't return stale data after PATCH writes.
  */
 
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { unstable_noStore as noStore } from 'next/cache';
+import { supabaseAdmin as supabase } from '@/lib/supabase/admin';
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY,
-);
+export const dynamic = 'force-dynamic';
 
-export async function POST(req, context) {
+export async function GET(_req, context) {
+  noStore();
   const params = await context.params;
   const programId = params?.programId;
 
@@ -21,55 +26,48 @@ export async function POST(req, context) {
     return NextResponse.json({ error: 'programId required.' }, { status: 400 });
   }
 
-  let body;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: 'Invalid JSON.' }, { status: 400 });
-  }
+  const [programRes, sessionsRes] = await Promise.all([
+    supabase
+      .from('programs')
+      .select('*')
+      .eq('id', programId)
+      .maybeSingle(),
+    supabase
+      .from('program_sessions')
+      .select('*')
+      .eq('program_id', programId)
+      .order('week_number', { ascending: true })
+      .order('day_index', { ascending: true }),
+  ]);
 
-  const name = typeof body?.name === 'string' ? body.name.trim() : '';
-  if (!name) {
-    return NextResponse.json({ error: 'Session name required.' }, { status: 400 });
+  if (programRes.error) {
+    console.error('[program] load failed', programRes.error);
+    return NextResponse.json({ error: 'Could not load program.' }, { status: 500 });
   }
-  if (name.length > 200) {
-    return NextResponse.json({ error: 'Session name too long.' }, { status: 400 });
-  }
-
-  // Verify program exists
-  const { data: program, error: programErr } = await supabase
-    .from('programs')
-    .select('id')
-    .eq('id', programId)
-    .maybeSingle();
-
-  if (programErr || !program) {
+  if (!programRes.data) {
     return NextResponse.json({ error: 'Program not found.' }, { status: 404 });
   }
-
-  const insert = {
-    program_id: programId,
-    week_number: Number.isFinite(Number(body?.week_number)) && Number(body.week_number) > 0
-      ? Math.floor(Number(body.week_number))
-      : 1,
-    day_index: Number.isFinite(Number(body?.day_index)) && Number(body.day_index) > 0
-      ? Math.floor(Number(body.day_index))
-      : 1,
-    name,
-    exercises: [],
-    notes: typeof body?.notes === 'string' ? body.notes.trim() || null : null,
-  };
-
-  const { data: session, error: insertErr } = await supabase
-    .from('program_sessions')
-    .insert(insert)
-    .select()
-    .single();
-
-  if (insertErr) {
-    console.error('[sessions] insert failed', insertErr);
-    return NextResponse.json({ error: 'Could not create session.' }, { status: 500 });
+  if (sessionsRes.error) {
+    console.error('[sessions] load failed', sessionsRes.error);
+    return NextResponse.json({ error: 'Could not load sessions.' }, { status: 500 });
   }
 
-  return NextResponse.json({ session });
+  const { data: client } = await supabase
+    .from('clients')
+    .select('id, name')
+    .eq('id', programRes.data.client_id)
+    .maybeSingle();
+
+  return NextResponse.json(
+    {
+      program: programRes.data,
+      sessions: sessionsRes.data || [],
+      client: client || null,
+    },
+    {
+      headers: {
+        'Cache-Control': 'no-store, max-age=0, must-revalidate',
+      },
+    },
+  );
 }
