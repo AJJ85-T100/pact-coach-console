@@ -11,15 +11,26 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 export const dynamic = 'force-dynamic';
+import { unstable_noStore as noStore } from 'next/cache';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY,
+  {
+    global: {
+      fetch: (url, options = {}) => fetch(url, { ...options, cache: 'no-store' }),
+    },
+  }
 );
 
 export async function GET(_req, context) {
+  noStore();
+  const params = await context.params;
+  // … rest stays the same
+
   const params = await context.params;
   const programId = params?.programId;
+  
 
   if (!programId || typeof programId !== 'string') {
     return NextResponse.json({ error: 'programId required.' }, { status: 400 });
