@@ -67,7 +67,7 @@ async function fetchAthleteData(service, client) {
   const fourteenAgo = new Date(); fourteenAgo.setDate(fourteenAgo.getDate() - 14);
   const sevenAgo    = new Date(); sevenAgo.setDate(sevenAgo.getDate() - 7);
 
-  const [healthR, pactsR, convosR, slipsR, weighR] = await Promise.all([
+  const [healthR, pactsR, convosR, slipsR, weighR, progsR] = await Promise.all([
     service.from('health_data')
       .select('steps, calories, protein, created_at')
       .eq('client_id', client.id)
@@ -92,6 +92,12 @@ async function fetchAthleteData(service, client) {
       .not('weight', 'is', null)
       .order('created_at', { ascending: false })
       .limit(1),
+    // NEW: non-archived training programmes for this client
+    service.from('programs')
+      .select('id, name, status, weeks')
+      .eq('client_id', client.id)
+      .neq('status', 'archived')
+      .order('updated_at', { ascending: false }),
   ]);
 
   // Index health_data by date (extracted from created_at)
@@ -141,6 +147,12 @@ async function fetchAthleteData(service, client) {
     ? +(currentWeight - client.target_weight).toFixed(1)
     : null;
 
+  // Current programme: prefer active over draft
+  const programmes = progsR.data || [];
+  const currentProgramme = programmes.find(p => p.status === 'active')
+                         || programmes.find(p => p.status === 'draft')
+                         || null;
+
   return {
     ...client,
     stepDays,
@@ -155,6 +167,7 @@ async function fetchAthleteData(service, client) {
     lost,
     toGo,
     activeThisWeek: uniqueConvoDays.size > 0 || pacts14.some(p => p.date >= days[0]),
+    currentProgramme,
   };
 }
 
@@ -286,6 +299,9 @@ function AthleteCard({ athlete: a }) {
           <EngagementScore score={a.engagement} />
         </div>
 
+        {/* Programme strip — current training programme */}
+        <ProgrammeStrip programme={a.currentProgramme} />
+
         {/* 7-day RAG strips */}
         <div className="space-y-2">
           <RAGStrip label="STEPS"     days={a.stepDays} />
@@ -308,6 +324,46 @@ function AthleteCard({ athlete: a }) {
         />
       </div>
     </Link>
+  );
+}
+
+function ProgrammeStrip({ programme }) {
+  if (!programme) {
+    return (
+      <div className="flex items-center justify-between gap-2 py-2 px-3 bg-bg/60 rounded border border-dashed border-border">
+        <div className="text-[10px] font-bold tracking-[0.18em] uppercase text-muted">
+          No programme
+        </div>
+        <span className="text-[9px] font-semibold tracking-wider uppercase text-red">
+          + Build one
+        </span>
+      </div>
+    );
+  }
+
+  const isActive = programme.status === 'active';
+  const accentColor = isActive ? 'border-l-emerald-500' : 'border-l-red';
+
+  return (
+    <div className={`flex items-center justify-between gap-2 py-2 px-3 bg-bg/60 rounded border-l-2 ${accentColor}`}>
+      <div className="min-w-0 flex-1">
+        <div className="text-[9px] font-bold tracking-[0.18em] uppercase text-muted leading-none mb-1">
+          On programme
+        </div>
+        <div className="text-xs font-semibold text-blue truncate leading-tight">
+          {programme.name}
+          {programme.weeks ? (
+            <span className="text-muted font-normal ml-1.5">· {programme.weeks}wk</span>
+          ) : null}
+        </div>
+      </div>
+      <span className={`text-[8px] font-bold tracking-[0.15em] uppercase px-1.5 py-1 rounded flex-shrink-0 border ${
+        isActive ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                   'bg-white text-blue border-border'
+      }`}>
+        {programme.status}
+      </span>
+    </div>
   );
 }
 

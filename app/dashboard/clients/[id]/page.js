@@ -81,12 +81,13 @@ export default async function ClientDetailPage({ params }) {
   const mondayStr = monday.toLocaleDateString('en-CA');
 
   // ============================================================
-  // Parallel data fetch — 13 queries, all scoped by client.id
+  // Parallel data fetch — 14 queries, all scoped by client.id
   // ============================================================
   const [
     msgsR, slipsR, pactsR, healthR, weighR, liftsR,
     customPactsR, weeklyPactR, weekendPactR,
     stakesR, cosignersR, winStackR, moodR,
+    progsR,
   ] = await Promise.all([
     // Conversation history (last 30)
     service.from('conversations')
@@ -177,6 +178,13 @@ export default async function ClientDetailPage({ params }) {
       .eq('client_id', client.id)
       .order('created_at', { ascending: false })
       .limit(1),
+
+    // Training programmes — non-archived, newest first
+    service.from('programs')
+      .select('id, name, status, weeks, start_date, updated_at')
+      .eq('client_id', client.id)
+      .neq('status', 'archived')
+      .order('updated_at', { ascending: false }),
   ]);
 
   // ============================================================
@@ -195,6 +203,7 @@ export default async function ClientDetailPage({ params }) {
   const cosigners   = cosignersR.data || [];
   const wins        = winStackR.data || [];
   const mood        = moodR.data?.[0] || null;
+  const programmes  = progsR.data || [];
 
   // Current weight: prefer latest weigh_in over (possibly stale) clients.current_weight
   const currentWeight = lastWeigh?.weight ?? client.current_weight;
@@ -293,11 +302,93 @@ export default async function ClientDetailPage({ params }) {
         </div>
       </header>
 
+      {/* Quick actions strip — sits right under the navy band */}
+      <div className="flex items-center gap-2 mb-5 flex-wrap">
+        <Link
+          href={`/dashboard/clients/${client.id}/programs`}
+          className="inline-flex items-center gap-2 bg-red text-white px-4 py-2 rounded text-[11px] font-bold tracking-[0.12em] uppercase hover:bg-red/90 transition-colors shadow-card"
+        >
+          <span className="text-base leading-none">+</span>
+          {programmes.length === 0 ? 'Build first programme' : 'New programme'}
+        </Link>
+        {programmes.length > 0 && (
+          <Link
+            href={`/dashboard/clients/${client.id}/programs`}
+            className="inline-flex items-center gap-2 bg-white border border-border text-blue px-4 py-2 rounded text-[11px] font-bold tracking-[0.12em] uppercase hover:border-blue transition-colors"
+          >
+            View all programmes · {programmes.length}
+          </Link>
+        )}
+      </div>
+
       {/* Main grid: data on left, conversation on right */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
 
         {/* LEFT — data cards (3 of 5 cols) */}
         <div className="lg:col-span-3 space-y-5">
+
+          {/* Training programmes — first card, top of column */}
+          <Card title="Training programmes">
+            {programmes.length === 0 ? (
+              <Link
+                href={`/dashboard/clients/${client.id}/programs`}
+                className="block text-center py-8 border-2 border-dashed border-border rounded hover:border-red hover:bg-bg/40 transition-all group"
+              >
+                <div className="text-sm text-blue font-bold mb-1 group-hover:text-red transition-colors">
+                  + Build first programme
+                </div>
+                <div className="text-[11px] text-muted">
+                  Design a training programme for {firstName}
+                </div>
+              </Link>
+            ) : (
+              <>
+                <ul className="divide-y divide-border">
+                  {programmes.slice(0, 4).map(p => (
+                    <li key={p.id}>
+                      <Link
+                        href={`/dashboard/clients/${client.id}/programs/${p.id}`}
+                        className="flex items-center justify-between gap-3 py-3 first:pt-0 last:pb-0 group"
+                      >
+                        <div className="min-w-0">
+                          <div className="font-semibold text-blue text-sm truncate group-hover:text-red transition-colors">
+                            {p.name}
+                          </div>
+                          <div className="text-[10px] text-muted tracking-wide mt-0.5">
+                            {p.weeks ? `${p.weeks} week${p.weeks === 1 ? '' : 's'}` : 'No length set'}
+                            {p.start_date && <> · starts {dateLabel(p.start_date)}</>}
+                          </div>
+                        </div>
+                        <span className={`text-[9px] font-bold tracking-[0.15em] uppercase px-2 py-1 rounded flex-shrink-0 border ${
+                          p.status === 'active' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                          p.status === 'draft'  ? 'bg-bg-alt text-blue border-border' :
+                                                  'bg-bg text-muted border-border'
+                        }`}>
+                          {p.status}
+                        </span>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+                <div className="pt-3 mt-3 border-t border-border flex items-center justify-between">
+                  <Link
+                    href={`/dashboard/clients/${client.id}/programs`}
+                    className="text-[10px] font-bold tracking-[0.15em] uppercase text-red hover:text-red/80 transition-colors inline-block"
+                  >
+                    + New programme
+                  </Link>
+                  {programmes.length > 4 && (
+                    <Link
+                      href={`/dashboard/clients/${client.id}/programs`}
+                      className="text-[10px] font-semibold tracking-wider uppercase text-muted hover:text-blue transition-colors"
+                    >
+                      View all {programmes.length} →
+                    </Link>
+                  )}
+                </div>
+              </>
+            )}
+          </Card>
 
           <Card title="Journey">
             <div className="grid grid-cols-3 gap-4 mb-4">
