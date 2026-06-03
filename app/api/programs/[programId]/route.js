@@ -26,9 +26,6 @@ const supabase = createClient(
 export async function GET(_req, context) {
   noStore();
   const params = await context.params;
-  // … rest stays the same
-
-  const params = await context.params;
   const programId = params?.programId;
   
 
