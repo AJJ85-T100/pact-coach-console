@@ -3,19 +3,21 @@
 /**
  * /dashboard/clients/[id]/programs/[programId]
  *
- * Program editor — Wave 2b: adds edit and delete on both sessions and
- * exercises on top of Wave 2a's add functionality.
+ * Program editor — Wave 2c: status transitions and inline metadata editing
+ * on top of Wave 2b (add/edit/delete on sessions and exercises).
  *
  * UX patterns:
  * - Add: button → inline form expands → submit → form closes, page refreshes
  * - Edit: pencil icon on row/header → form replaces display inline → submit → done
  * - Delete: trash icon → button transforms to "Confirm?" → second click deletes,
  *           any other interaction cancels
+ * - Status: draft → "Activate" (red CTA) auto-archives any prior active; active
+ *           → "Archive programme" with inline confirm; archived → "Restore to draft"
  *
- * Still deferred to Wave 2c:
- * - Edit program metadata (name, weeks, start_date, notes)
- * - Status transitions (draft → active → archived)
- * - Drag-to-reorder
+ * Still deferred:
+ * - Delete programme entirely (DELETE /api/programs/[programId])
+ * - Drag-to-reorder sessions
+ * - Sidebar Programs link → top-level /dashboard/programs roster view
  */
 
 import { useEffect, useState } from 'react';
@@ -81,7 +83,11 @@ export default function ProgramEditorPage() {
   return (
     <div className="p-6 sm:p-8 max-w-5xl">
       <Breadcrumb client={client} program={program} clientId={clientId} />
-      <ProgramHeader program={program} sessionCount={sessions.length} />
+      <ProgramHeader
+        program={program}
+        sessionCount={sessions.length}
+        onChange={refresh}
+      />
       <SessionsSection
         programId={programId}
         sessions={sessions}
@@ -119,9 +125,79 @@ function Breadcrumb({ client, program, clientId }) {
 }
 
 // ============================================================================
-// Program header
+// Program header — name, metadata, status, edit + transition controls
 // ============================================================================
-function ProgramHeader({ program, sessionCount }) {
+function ProgramHeader({ program, sessionCount, onChange }) {
+  const [mode, setMode] = useState('view'); // 'view' | 'edit'
+  const [archiveConfirming, setArchiveConfirming] = useState(false);
+  const [statusBusy, setStatusBusy] = useState(false);
+  const [statusError, setStatusError] = useState(null);
+  const [flash, setFlash] = useState(null); // { tone: 'ok' | 'warn', text }
+
+  // Auto-cancel archive confirm after 3s of no interaction
+  useEffect(() => {
+    if (!archiveConfirming) return;
+    const t = setTimeout(() => setArchiveConfirming(false), 3000);
+    return () => clearTimeout(t);
+  }, [archiveConfirming]);
+
+  // Auto-clear flash after 4s
+  useEffect(() => {
+    if (!flash) return;
+    const t = setTimeout(() => setFlash(null), 4000);
+    return () => clearTimeout(t);
+  }, [flash]);
+
+  async function patchStatus(nextStatus) {
+    setStatusBusy(true);
+    setStatusError(null);
+    try {
+      const res = await fetch(`/api/programs/${program.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: nextStatus }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not change status.');
+
+      if (nextStatus === 'active' && data.autoArchivedCount > 0) {
+        setFlash({
+          tone: 'warn',
+          text: `Activated. Previous active programme${data.autoArchivedCount === 1 ? '' : 's'} archived.`,
+        });
+      } else {
+        setFlash({
+          tone: 'ok',
+          text: nextStatus === 'active'   ? 'Programme activated.'
+              : nextStatus === 'archived' ? 'Programme archived.'
+              :                              'Restored to draft.',
+        });
+      }
+      setArchiveConfirming(false);
+      onChange();
+    } catch (err) {
+      setStatusError(err.message);
+    } finally {
+      setStatusBusy(false);
+    }
+  }
+
+  if (mode === 'edit') {
+    return (
+      <div className="mb-8">
+        <ProgramMetadataForm
+          program={program}
+          onCancel={() => setMode('view')}
+          onDone={() => {
+            setMode('view');
+            setFlash({ tone: 'ok', text: 'Programme details saved.' });
+            onChange();
+          }}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="mb-8">
       <div className="inline-block pt-2 border-t-2 border-[#D92D20] mb-3">
@@ -129,21 +205,223 @@ function ProgramHeader({ program, sessionCount }) {
           Programme
         </span>
       </div>
-      <h1 className="font-['Montserrat'] font-extrabold text-3xl sm:text-4xl text-[#0A2540] uppercase tracking-tight leading-none mb-4">
-        {program.name}
-      </h1>
-      <div className="flex items-center gap-3 flex-wrap text-[12px] font-['Inter'] text-[#8A95A3]">
+
+      <div className="flex items-start justify-between gap-4 flex-wrap mb-3">
+        <h1 className="font-['Montserrat'] font-extrabold text-3xl sm:text-4xl text-[#0A2540] uppercase tracking-tight leading-none">
+          {program.name}
+        </h1>
+        <button
+          onClick={() => setMode('edit')}
+          className="inline-flex items-center gap-1.5 font-['Inter'] font-semibold text-[11px] text-[#0A2540] hover:text-[#D92D20] uppercase tracking-[0.4px] px-2 py-1 transition-colors"
+          aria-label="Edit programme details"
+        >
+          <EditIcon />
+          Edit details
+        </button>
+      </div>
+
+      <div className="flex items-center gap-3 flex-wrap text-[12px] font-['Inter'] text-[#8A95A3] mb-4">
         <StatusPill status={program.status} />
         {program.weeks && <span>{program.weeks} {program.weeks === 1 ? 'week' : 'weeks'}</span>}
         {program.start_date && <span>Starts {formatDate(program.start_date)}</span>}
         <span>{sessionCount} {sessionCount === 1 ? 'session' : 'sessions'}</span>
       </div>
+
       {program.notes && (
-        <p className="mt-4 text-[14px] text-[#4A4A4A] font-['Inter'] max-w-3xl leading-relaxed">
+        <p className="mb-4 text-[14px] text-[#4A4A4A] font-['Inter'] max-w-3xl leading-relaxed">
           {program.notes}
         </p>
       )}
+
+      {/* Status transition actions */}
+      <div className="flex items-center gap-2 flex-wrap">
+        {program.status === 'draft' && (
+          <>
+            <button
+              onClick={() => patchStatus('active')}
+              disabled={statusBusy}
+              className="inline-flex items-center gap-2 bg-[#D92D20] hover:bg-[#B0241A] disabled:opacity-40 text-white font-['Inter'] font-semibold text-[12px] uppercase tracking-[0.4px] px-4 py-2.5 rounded-[6px] transition-colors"
+            >
+              {statusBusy ? 'Activating…' : 'Activate programme'}
+            </button>
+            <button
+              onClick={() => patchStatus('archived')}
+              disabled={statusBusy}
+              className="font-['Inter'] font-semibold text-[12px] text-[#8A95A3] hover:text-[#0A2540] uppercase tracking-[0.4px] px-3 py-2.5 disabled:opacity-40 transition-colors"
+            >
+              Archive
+            </button>
+          </>
+        )}
+
+        {program.status === 'active' && (
+          archiveConfirming ? (
+            <>
+              <button
+                onClick={() => patchStatus('archived')}
+                disabled={statusBusy}
+                className="inline-flex items-center gap-2 bg-[#D92D20] hover:bg-[#B0241A] disabled:opacity-40 text-white font-['Inter'] font-semibold text-[12px] uppercase tracking-[0.4px] px-4 py-2.5 rounded-[6px] transition-colors"
+              >
+                {statusBusy ? 'Archiving…' : 'Confirm archive'}
+              </button>
+              <button
+                onClick={() => setArchiveConfirming(false)}
+                disabled={statusBusy}
+                className="font-['Inter'] font-semibold text-[12px] text-[#0A2540] hover:text-[#D92D20] uppercase tracking-[0.4px] px-3 py-2.5 disabled:opacity-40 transition-colors"
+              >
+                Keep active
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={() => setArchiveConfirming(true)}
+              className="inline-flex items-center gap-2 bg-white border border-[#E2E6EB] hover:border-[#0A2540] text-[#0A2540] font-['Inter'] font-semibold text-[12px] uppercase tracking-[0.4px] px-4 py-2.5 rounded-[6px] transition-colors"
+            >
+              Archive programme
+            </button>
+          )
+        )}
+
+        {program.status === 'archived' && (
+          <button
+            onClick={() => patchStatus('draft')}
+            disabled={statusBusy}
+            className="inline-flex items-center gap-2 bg-white border border-[#E2E6EB] hover:border-[#0A2540] text-[#0A2540] font-['Inter'] font-semibold text-[12px] uppercase tracking-[0.4px] px-4 py-2.5 rounded-[6px] disabled:opacity-40 transition-colors"
+          >
+            {statusBusy ? 'Restoring…' : 'Restore to draft'}
+          </button>
+        )}
+      </div>
+
+      {statusError && (
+        <div className="mt-3 p-3 bg-[#F4F6F8] border-l-[3px] border-[#D92D20] rounded-[4px] max-w-2xl">
+          <p className="font-['Inter'] text-sm text-[#0A2540]">
+            <span className="font-bold">Couldn't change status:</span> {statusError}
+          </p>
+        </div>
+      )}
+
+      {flash && (
+        <div className={`mt-3 p-3 rounded-[4px] max-w-2xl border-l-[3px] ${
+          flash.tone === 'warn'
+            ? 'bg-[#FFF8EB] border-[#D97706]'
+            : 'bg-[#F4F6F8] border-[#0F8A5F]'
+        }`}>
+          <p className="font-['Inter'] text-sm text-[#0A2540]">{flash.text}</p>
+        </div>
+      )}
     </div>
+  );
+}
+
+// Edit metadata form (name, weeks, start_date, notes)
+function ProgramMetadataForm({ program, onCancel, onDone }) {
+  const [name, setName] = useState(program.name || '');
+  const [weeks, setWeeks] = useState(program.weeks ?? '');
+  const [startDate, setStartDate] = useState(program.start_date || '');
+  const [notes, setNotes] = useState(program.notes || '');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState(null);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setSubmitting(true);
+    setError(null);
+    try {
+      const body = {
+        name: name.trim(),
+        weeks: weeks === '' ? null : Number(weeks),
+        start_date: startDate || null,
+        notes: notes.trim() || null,
+      };
+      const res = await fetch(`/api/programs/${program.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not save.');
+      onDone();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="bg-white border border-[#E2E6EB] rounded-[6px] p-5">
+      <h3 className="font-['Montserrat'] font-bold text-base text-[#0A2540] uppercase tracking-tight mb-4">
+        Edit programme details
+      </h3>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+        <div className="sm:col-span-2">
+          <FormField label="Name" required>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+              maxLength={200}
+              placeholder="e.g. 12-Week Strength Block"
+              className="w-full bg-[#F4F6F8] border border-[#E2E6EB] rounded-[4px] px-3 py-2 text-sm text-[#0A2540] font-['Inter'] focus:outline-none focus:border-[#0A2540] transition-colors"
+            />
+          </FormField>
+        </div>
+        <FormField label="Weeks">
+          <input
+            type="number" min="1" max="52"
+            value={weeks}
+            onChange={(e) => setWeeks(e.target.value)}
+            placeholder="12"
+            className="w-full bg-[#F4F6F8] border border-[#E2E6EB] rounded-[4px] px-3 py-2 text-sm text-[#0A2540] font-['Inter'] focus:outline-none focus:border-[#0A2540] transition-colors"
+          />
+        </FormField>
+        <FormField label="Start date">
+          <input
+            type="date"
+            value={startDate}
+            onChange={(e) => setStartDate(e.target.value)}
+            className="w-full bg-[#F4F6F8] border border-[#E2E6EB] rounded-[4px] px-3 py-2 text-sm text-[#0A2540] font-['Inter'] focus:outline-none focus:border-[#0A2540] transition-colors"
+          />
+        </FormField>
+      </div>
+      <FormField label="Notes (optional)">
+        <textarea
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          rows={3}
+          placeholder="Block focus, periodisation notes, things to revisit at week 4…"
+          className="w-full bg-[#F4F6F8] border border-[#E2E6EB] rounded-[4px] px-3 py-2 text-sm text-[#0A2540] font-['Inter'] focus:outline-none focus:border-[#0A2540] transition-colors resize-none"
+        />
+      </FormField>
+
+      {error && (
+        <div className="mt-3 p-3 bg-[#F4F6F8] border-l-[3px] border-[#D92D20] rounded-[4px]">
+          <p className="font-['Inter'] text-sm text-[#0A2540]">
+            <span className="font-bold">Couldn't save:</span> {error}
+          </p>
+        </div>
+      )}
+
+      <div className="flex gap-2 mt-5">
+        <button
+          type="submit"
+          disabled={!name.trim() || submitting}
+          className="inline-flex items-center gap-2 bg-[#D92D20] hover:bg-[#B0241A] disabled:opacity-40 disabled:cursor-not-allowed text-white font-['Inter'] font-semibold text-[12px] uppercase tracking-[0.4px] px-4 py-2.5 rounded-[6px] transition-colors"
+        >
+          {submitting ? 'Saving…' : 'Save changes'}
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={submitting}
+          className="font-['Inter'] font-semibold text-[12px] text-[#0A2540] hover:text-[#D92D20] uppercase tracking-[0.4px] px-3 py-2.5 disabled:opacity-40 transition-colors"
+        >
+          Cancel
+        </button>
+      </div>
+    </form>
   );
 }
 
