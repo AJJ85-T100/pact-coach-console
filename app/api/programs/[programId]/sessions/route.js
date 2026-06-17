@@ -1,14 +1,11 @@
 /**
- * /api/programs/[programId]
+ * /api/programs/[programId]/sessions
  *
- * GET — Load a program with all its sessions, plus minimal client info
- *       for the editor page breadcrumb.
+ * GET  — List the sessions for a programme (ordered week_number, day_index).
+ * POST — Create a new session under the programme.
  *
- * Sessions are sorted by week_number then day_index so the editor renders
- * them in training order without needing to sort client-side.
- *
- * Uses the shared no-cache admin client (lib/supabase/admin.js) so the
- * fetch cache doesn't return stale data after PATCH writes.
+ * Uses the shared no-cache admin client (lib/supabase/admin.js) so reads
+ * after a write don't return stale data.
  */
 
 import { NextResponse } from 'next/server';
@@ -17,6 +14,11 @@ import { supabaseAdmin as supabase } from '@/lib/supabase/admin';
 
 export const dynamic = 'force-dynamic';
 
+const noStoreHeaders = { 'Cache-Control': 'no-store, max-age=0, must-revalidate' };
+
+// ============================================================================
+// GET — list the programme's sessions
+// ============================================================================
 export async function GET(_req, context) {
   noStore();
   const params = await context.params;
@@ -26,48 +28,89 @@ export async function GET(_req, context) {
     return NextResponse.json({ error: 'programId required.' }, { status: 400 });
   }
 
-  const [programRes, sessionsRes] = await Promise.all([
-    supabase
-      .from('programs')
-      .select('*')
-      .eq('id', programId)
-      .maybeSingle(),
-    supabase
-      .from('program_sessions')
-      .select('*')
-      .eq('program_id', programId)
-      .order('week_number', { ascending: true })
-      .order('day_index', { ascending: true }),
-  ]);
+  const { data, error } = await supabase
+    .from('program_sessions')
+    .select('*')
+    .eq('program_id', programId)
+    .order('week_number', { ascending: true })
+    .order('day_index', { ascending: true });
 
-  if (programRes.error) {
-    console.error('[program] load failed', programRes.error);
-    return NextResponse.json({ error: 'Could not load program.' }, { status: 500 });
-  }
-  if (!programRes.data) {
-    return NextResponse.json({ error: 'Program not found.' }, { status: 404 });
-  }
-  if (sessionsRes.error) {
-    console.error('[sessions] load failed', sessionsRes.error);
+  if (error) {
+    console.error('[sessions] list failed', error);
     return NextResponse.json({ error: 'Could not load sessions.' }, { status: 500 });
   }
 
-  const { data: client } = await supabase
-    .from('clients')
-    .select('id, name')
-    .eq('id', programRes.data.client_id)
+  return NextResponse.json({ sessions: data || [] }, { headers: noStoreHeaders });
+}
+
+// ============================================================================
+// POST — create a session under the programme
+// ============================================================================
+export async function POST(req, context) {
+  noStore();
+  const params = await context.params;
+  const programId = params?.programId;
+
+  if (!programId || typeof programId !== 'string') {
+    return NextResponse.json({ error: 'programId required.' }, { status: 400 });
+  }
+
+  let body;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON.' }, { status: 400 });
+  }
+
+  const name = typeof body.name === 'string' ? body.name.trim() : '';
+  if (!name) {
+    return NextResponse.json({ error: 'Session name is required.' }, { status: 400 });
+  }
+
+  const week = Number(body.week_number);
+  if (!Number.isFinite(week) || week < 1 || week > 52) {
+    return NextResponse.json({ error: 'Week must be between 1 and 52.' }, { status: 400 });
+  }
+
+  const day = Number(body.day_index);
+  if (!Number.isFinite(day) || day < 1 || day > 7) {
+    return NextResponse.json({ error: 'Day must be between 1 and 7.' }, { status: 400 });
+  }
+
+  const notes = body.notes ? String(body.notes).trim() || null : null;
+
+  // Confirm the programme exists so we don't create orphan sessions.
+  const { data: program, error: progErr } = await supabase
+    .from('programs')
+    .select('id')
+    .eq('id', programId)
     .maybeSingle();
 
-  return NextResponse.json(
-    {
-      program: programRes.data,
-      sessions: sessionsRes.data || [],
-      client: client || null,
-    },
-    {
-      headers: {
-        'Cache-Control': 'no-store, max-age=0, must-revalidate',
-      },
-    },
-  );
+  if (progErr) {
+    console.error('[sessions] program lookup failed', progErr);
+    return NextResponse.json({ error: 'Could not create session.' }, { status: 500 });
+  }
+  if (!program) {
+    return NextResponse.json({ error: 'Programme not found.' }, { status: 404 });
+  }
+
+  const { data, error } = await supabase
+    .from('program_sessions')
+    .insert({
+      program_id: programId,
+      name,
+      week_number: Math.floor(week),
+      day_index: Math.floor(day),
+      notes,
+      exercises: [],
+    })
+    .select()
+    .maybeSingle();
+
+  if (error) {
+    console.error('[sessions] create failed', error);
+    return NextResponse.json({ error: 'Could not create session.' }, { status: 500 });
+  }
+
+  return NextResponse.json({ session: data }, { status: 201, headers: noStoreHeaders });
 }
