@@ -20,9 +20,51 @@
  * - Sidebar Programs link → top-level /dashboard/programs roster view
  */
 
-import { useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
+
+// ============================================================================
+// Exercise picker context + equipment matching
+// ============================================================================
+const ExercisePickerContext = createContext({ library: [], availableEquipment: new Set(), scanDone: false });
+
+// Map free-text gym-scan equipment onto canonical tags.
+const EQUIP_KEYWORDS = {
+  barbell:         ['barbell', 'olympic bar'],
+  rack:            ['rack', 'cage'],
+  dumbbell:        ['dumbbell', 'dumbell'],
+  kettlebell:      ['kettlebell', 'kettle bell'],
+  machine:         ['machine', 'leg press', 'pulldown', 'pec deck', 'hack squat'],
+  cable:           ['cable', 'pulley', 'crossover'],
+  'smith-machine': ['smith'],
+  'pull-up-bar':   ['pull-up bar', 'pull up bar', 'pullup bar', 'chin-up bar', 'chin up bar'],
+  bench:           ['bench'],
+  'trap-bar':      ['trap bar', 'trap-bar', 'hex bar'],
+  'ez-bar':        ['ez bar', 'ez-bar', 'ez curl'],
+  'medicine-ball': ['medicine ball', 'med ball', 'wall ball', 'slam ball'],
+  box:             ['plyo box', 'jump box', 'plyo', 'box'],
+  sled:            ['sled', 'prowler'],
+  rower:           ['rower', 'row erg', 'concept2', 'concept 2'],
+  bike:            ['assault bike', 'air bike', 'echo bike', 'exercise bike'],
+};
+
+function deriveAvailableEquipment(equipmentList) {
+  const available = new Set();
+  if (!Array.isArray(equipmentList)) return available;
+  const haystack = equipmentList.filter((e) => typeof e === 'string').map((e) => e.toLowerCase());
+  for (const [tag, keywords] of Object.entries(EQUIP_KEYWORDS)) {
+    if (keywords.some((kw) => haystack.some((h) => h.includes(kw)))) available.add(tag);
+  }
+  return available;
+}
+
+// Equipment an exercise needs that the athlete doesn't appear to have.
+// "bodyweight" is always available; an empty list never flags.
+function missingEquipment(needed, available) {
+  if (!Array.isArray(needed)) return [];
+  return needed.filter((t) => t && t !== 'bodyweight' && !available.has(t));
+}
 
 export default function ProgramEditorPage() {
   const params = useParams();
@@ -31,6 +73,16 @@ export default function ProgramEditorPage() {
 
   const [data, setData] = useState(null);
   const [loadError, setLoadError] = useState(null);
+  const [library, setLibrary] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/exercises', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((j) => { if (!cancelled && Array.isArray(j.exercises)) setLibrary(j.exercises); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -79,21 +131,25 @@ export default function ProgramEditorPage() {
   }
 
   const { program, sessions, client } = data;
+  const availableEquipment = deriveAvailableEquipment(client?.equipment_list);
+  const scanDone = Array.isArray(client?.equipment_list) && client.equipment_list.length > 0;
 
   return (
-    <div className="p-6 sm:p-8 max-w-5xl">
-      <Breadcrumb client={client} program={program} clientId={clientId} />
-      <ProgramHeader
-        program={program}
-        sessionCount={sessions.length}
-        onChange={refresh}
-      />
-      <SessionsSection
-        programId={programId}
-        sessions={sessions}
-        onChange={refresh}
-      />
-    </div>
+    <ExercisePickerContext.Provider value={{ library, availableEquipment, scanDone }}>
+      <div className="p-6 sm:p-8 max-w-5xl">
+        <Breadcrumb client={client} program={program} clientId={clientId} />
+        <ProgramHeader
+          program={program}
+          sessionCount={sessions.length}
+          onChange={refresh}
+        />
+        <SessionsSection
+          programId={programId}
+          sessions={sessions}
+          onChange={refresh}
+        />
+      </div>
+    </ExercisePickerContext.Provider>
   );
 }
 
@@ -1112,9 +1168,48 @@ function ExerciseForm({ mode, session, exercise, onCancel, onDone }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
 
-  async function handleSubmit(e) {
-    e.preventDefault();
-    if (!name.trim() || submitting) return;
+  const { library, availableEquipment, scanDone } = useContext(ExercisePickerContext);
+  const [equipmentNeeded, setEquipmentNeeded] = useState(
+    isEdit && Array.isArray(exercise.equipment_needed) ? exercise.equipment_needed : []
+  );
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [overrideEquip, setOverrideEquip] = useState(false);
+  const [creatingCustom, setCreatingCustom] = useState(false);
+
+  const missing = scanDone ? missingEquipment(equipmentNeeded, availableEquipment) : [];
+
+  // Pick a library exercise: fills name + its equipment, clears any prior override.
+  function selectFromLibrary(ex) {
+    setName(ex.name);
+    setEquipmentNeeded(Array.isArray(ex.equipment) ? ex.equipment : []);
+    setOverrideEquip(false);
+    setError(null);
+    setPickerOpen(false);
+  }
+
+  // Create a custom exercise from the typed name, then select it.
+  async function createCustom() {
+    const typed = name.trim();
+    if (!typed || creatingCustom) return;
+    setCreatingCustom(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/exercises', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: typed, equipment: [] }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not create exercise.');
+      selectFromLibrary(data.exercise);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setCreatingCustom(false);
+    }
+  }
+
+  async function doSave() {
     setSubmitting(true);
     setError(null);
     try {
@@ -1129,7 +1224,7 @@ function ExerciseForm({ mode, session, exercise, onCancel, onDone }) {
         rest_seconds: rest    ? parseInt(rest, 10)    : null,
         tempo:        tempo.trim() || null,
         notes:        notes.trim() || null,
-        equipment_needed: isEdit && Array.isArray(exercise.equipment_needed) ? exercise.equipment_needed : [],
+        equipment_needed: equipmentNeeded,
       };
 
       const currentExercises = Array.isArray(session.exercises) ? session.exercises : [];
@@ -1152,23 +1247,67 @@ function ExerciseForm({ mode, session, exercise, onCancel, onDone }) {
     }
   }
 
+  function handleSubmit(e) {
+    e.preventDefault();
+    if (!name.trim() || submitting) return;
+    // Equipment confirm-gate: if the athlete's kit doesn't cover it, the warning
+    // + "Add anyway" below take over until the coach confirms.
+    if (missing.length > 0 && !overrideEquip) return;
+    doSave();
+  }
+
   return (
     <form onSubmit={handleSubmit} className="bg-[#F4F6F8] border border-[#E2E6EB] rounded-[4px] p-4 mt-2">
       <h4 className="font-['Montserrat'] font-bold text-[12px] text-[#0A2540] uppercase tracking-[1px] mb-3">
         {isEdit ? 'Edit exercise' : 'New exercise'}
       </h4>
 
-      <FormField label="Exercise name" required>
-        <input
-          type="text"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          required
-          maxLength={120}
-          placeholder="e.g. Back Squat"
-          className="w-full bg-white border border-[#E2E6EB] rounded-[4px] px-3 py-2 text-sm text-[#0A2540] font-['Inter'] focus:outline-none focus:border-[#0A2540] transition-colors"
-        />
-      </FormField>
+      <div className="relative">
+        <FormField label="Exercise" required>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => { setName(e.target.value); setEquipmentNeeded([]); setOverrideEquip(false); setPickerOpen(true); }}
+            onFocus={() => setPickerOpen(true)}
+            onBlur={() => setTimeout(() => setPickerOpen(false), 150)}
+            required
+            maxLength={120}
+            autoComplete="off"
+            placeholder="Search the library or type your own…"
+            className="w-full bg-white border border-[#E2E6EB] rounded-[4px] px-3 py-2 text-sm text-[#0A2540] font-['Inter'] focus:outline-none focus:border-[#0A2540] transition-colors"
+          />
+        </FormField>
+
+        {pickerOpen && (
+          <ExercisePickerDropdown
+            query={name}
+            library={library}
+            availableEquipment={availableEquipment}
+            scanDone={scanDone}
+            creatingCustom={creatingCustom}
+            onPick={selectFromLibrary}
+            onCreateCustom={createCustom}
+          />
+        )}
+
+        {equipmentNeeded.length > 0 && (
+          <div className="flex flex-wrap gap-1 mt-2">
+            {equipmentNeeded.map((tag) => {
+              const unmet = tag !== 'bodyweight' && scanDone && !availableEquipment.has(tag);
+              return (
+                <span
+                  key={tag}
+                  className={`text-[10px] font-['Inter'] font-semibold uppercase tracking-[1px] px-2 py-0.5 rounded-[3px] ${
+                    unmet ? 'bg-[#FEE2E0] text-[#D92D20]' : 'bg-[#EBF1F5] text-[#0A2540]'
+                  }`}
+                >
+                  {tag}
+                </span>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-6 gap-2 mt-3">
         <FormField label="Sets">
@@ -1250,14 +1389,34 @@ function ExerciseForm({ mode, session, exercise, onCancel, onDone }) {
         </div>
       )}
 
+      {missing.length > 0 && (
+        <div className="mt-3 p-3 bg-[#FFF8EB] border-l-[3px] border-[#D97706] rounded-[4px]">
+          <p className="font-['Inter'] text-sm text-[#0A2540]">
+            The client does not appear to have{' '}
+            <span className="font-bold">{missing.join(', ')}</span>. Are you sure you wish to add this?
+          </p>
+        </div>
+      )}
+
       <div className="flex gap-2 mt-4">
-        <button
-          type="submit"
-          disabled={!name.trim() || submitting}
-          className="inline-flex items-center gap-2 bg-[#D92D20] hover:bg-[#B0241A] disabled:opacity-40 disabled:cursor-not-allowed text-white font-['Inter'] font-semibold text-[12px] uppercase tracking-[0.4px] px-4 py-2 rounded-[6px] transition-colors"
-        >
-          {submitting ? 'Saving…' : (isEdit ? 'Save changes' : 'Add exercise')}
-        </button>
+        {missing.length > 0 ? (
+          <button
+            type="button"
+            onClick={() => { setOverrideEquip(true); doSave(); }}
+            disabled={!name.trim() || submitting}
+            className="inline-flex items-center gap-2 bg-[#D97706] hover:bg-[#B45309] disabled:opacity-40 disabled:cursor-not-allowed text-white font-['Inter'] font-semibold text-[12px] uppercase tracking-[0.4px] px-4 py-2 rounded-[6px] transition-colors"
+          >
+            {submitting ? 'Saving…' : 'Add anyway'}
+          </button>
+        ) : (
+          <button
+            type="submit"
+            disabled={!name.trim() || submitting}
+            className="inline-flex items-center gap-2 bg-[#D92D20] hover:bg-[#B0241A] disabled:opacity-40 disabled:cursor-not-allowed text-white font-['Inter'] font-semibold text-[12px] uppercase tracking-[0.4px] px-4 py-2 rounded-[6px] transition-colors"
+          >
+            {submitting ? 'Saving…' : (isEdit ? 'Save changes' : 'Add exercise')}
+          </button>
+        )}
         <button
           type="button"
           onClick={onCancel}
@@ -1268,6 +1427,64 @@ function ExerciseForm({ mode, session, exercise, onCancel, onDone }) {
         </button>
       </div>
     </form>
+  );
+}
+
+// ============================================================================
+// Exercise picker dropdown — searchable library with equipment availability
+// ============================================================================
+function ExercisePickerDropdown({ query, library, availableEquipment, scanDone, creatingCustom, onPick, onCreateCustom }) {
+  const q = (query || '').trim().toLowerCase();
+  const matches = (q ? library.filter((ex) => ex.name.toLowerCase().includes(q)) : library).slice(0, 8);
+  const exactMatch = library.some((ex) => ex.name.toLowerCase() === q);
+  const showCreate = q.length > 0 && !exactMatch;
+
+  return (
+    <div className="absolute z-20 left-0 right-0 mt-1 bg-white border border-[#E2E6EB] rounded-[6px] shadow-[0_18px_40px_-12px_rgba(10,37,64,0.18)] max-h-72 overflow-y-auto">
+      {matches.length === 0 && !showCreate && (
+        <div className="px-3 py-3 font-['Inter'] text-[13px] text-[#8A95A3]">No matches.</div>
+      )}
+      {matches.map((ex) => {
+        const miss = scanDone ? missingEquipment(ex.equipment, availableEquipment) : [];
+        return (
+          <button
+            key={ex.id}
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => onPick(ex)}
+            className="w-full text-left px-3 py-2 hover:bg-[#F4F6F8] border-b border-[#E2E6EB] last:border-b-0 transition-colors"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-['Inter'] font-medium text-[13px] text-[#0A2540] truncate">{ex.name}</span>
+              {ex.is_custom && (
+                <span className="flex-shrink-0 text-[9px] font-['Inter'] font-bold uppercase tracking-[1px] text-[#8A95A3]">Custom</span>
+              )}
+            </div>
+            <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+              {(ex.equipment || []).map((tag) => (
+                <span key={tag} className="text-[9px] font-['Inter'] uppercase tracking-[0.5px] text-[#8A95A3]">{tag}</span>
+              ))}
+              {scanDone && (
+                miss.length > 0
+                  ? <span className="text-[9px] font-['Inter'] font-semibold uppercase tracking-[0.5px] text-[#D92D20]">· needs {miss.join(', ')}</span>
+                  : <span className="text-[9px] font-['Inter'] font-semibold uppercase tracking-[0.5px] text-[#0F8A5F]">· in kit</span>
+              )}
+            </div>
+          </button>
+        );
+      })}
+      {showCreate && (
+        <button
+          type="button"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={onCreateCustom}
+          disabled={creatingCustom}
+          className="w-full text-left px-3 py-2.5 border-t border-[#E2E6EB] hover:bg-[#F4F6F8] font-['Inter'] text-[13px] text-[#D92D20] font-semibold disabled:opacity-50 transition-colors"
+        >
+          {creatingCustom ? 'Adding…' : `+ Add “${query.trim()}” as a custom exercise`}
+        </button>
+      )}
+    </div>
   );
 }
 

@@ -63,7 +63,7 @@ export async function GET(_req, context) {
 
   const { data: client } = await supabase
     .from('clients')
-    .select('id, name')
+    .select('id, name, equipment_list')
     .eq('id', programRes.data.client_id)
     .maybeSingle();
 
