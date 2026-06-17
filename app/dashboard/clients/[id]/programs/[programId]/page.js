@@ -21,7 +21,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 
 export default function ProgramEditorPage() {
@@ -133,6 +133,10 @@ function ProgramHeader({ program, sessionCount, onChange }) {
   const [statusBusy, setStatusBusy] = useState(false);
   const [statusError, setStatusError] = useState(null);
   const [flash, setFlash] = useState(null); // { tone: 'ok' | 'warn', text }
+  const [deleteConfirming, setDeleteConfirming] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState(null);
+  const router = useRouter();
 
   // Auto-cancel archive confirm after 3s of no interaction
   useEffect(() => {
@@ -179,6 +183,23 @@ function ProgramHeader({ program, sessionCount, onChange }) {
       setStatusError(err.message);
     } finally {
       setStatusBusy(false);
+    }
+  }
+
+  async function handleDelete() {
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      const res = await fetch(`/api/programs/${program.id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Could not delete programme.');
+      }
+      // Back to this athlete's programme list.
+      router.push(`/dashboard/clients/${program.client_id}/programs`);
+    } catch (err) {
+      setDeleteError(err.message);
+      setDeleting(false);
     }
   }
 
@@ -310,6 +331,46 @@ function ProgramHeader({ program, sessionCount, onChange }) {
           <p className="font-['Inter'] text-sm text-[#0A2540]">{flash.text}</p>
         </div>
       )}
+
+      {/* Danger zone — delete the whole programme */}
+      <div className="mt-5 pt-4 border-t border-[#E2E6EB] max-w-2xl">
+        {deleteConfirming ? (
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className="font-['Inter'] text-[13px] text-[#0A2540]">
+              Delete <span className="font-bold">{program.name}</span> and all its sessions? This can&apos;t be undone.
+            </span>
+            <button
+              onClick={handleDelete}
+              disabled={deleting}
+              className="inline-flex items-center gap-2 bg-[#D92D20] hover:bg-[#B0241A] disabled:opacity-40 text-white font-['Inter'] font-semibold text-[12px] uppercase tracking-[0.4px] px-4 py-2 rounded-[6px] transition-colors"
+            >
+              {deleting ? 'Deleting…' : 'Delete permanently'}
+            </button>
+            <button
+              onClick={() => setDeleteConfirming(false)}
+              disabled={deleting}
+              className="font-['Inter'] font-semibold text-[12px] text-[#0A2540] hover:text-[#D92D20] uppercase tracking-[0.4px] px-3 py-2 disabled:opacity-40 transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => setDeleteConfirming(true)}
+            className="inline-flex items-center gap-1.5 font-['Inter'] font-semibold text-[12px] text-[#8A95A3] hover:text-[#D92D20] uppercase tracking-[0.4px] transition-colors"
+          >
+            <TrashIcon />
+            Delete programme
+          </button>
+        )}
+        {deleteError && (
+          <div className="mt-3 p-3 bg-[#F4F6F8] border-l-[3px] border-[#D92D20] rounded-[4px]">
+            <p className="font-['Inter'] text-sm text-[#0A2540]">
+              <span className="font-bold">Couldn&apos;t delete:</span> {deleteError}
+            </p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -448,6 +509,18 @@ function SessionsSection({ programId, sessions, onChange }) {
     ? Math.max(...sessions.map((s) => s.week_number))
     : 1;
 
+  // Group sessions by week, preserving the API's (week_number, day_index) order.
+  const weekOrder = [];
+  const byWeek = new Map();
+  for (const s of sessions) {
+    if (!byWeek.has(s.week_number)) {
+      byWeek.set(s.week_number, []);
+      weekOrder.push(s.week_number);
+    }
+    byWeek.get(s.week_number).push(s);
+  }
+  weekOrder.sort((a, b) => a - b);
+
   return (
     <section>
       <div className="flex items-end justify-between flex-wrap gap-3 mb-4">
@@ -478,17 +551,143 @@ function SessionsSection({ programId, sessions, onChange }) {
       {sessions.length === 0 && !showAddForm ? (
         <EmptySessions onAdd={() => setShowAddForm(true)} />
       ) : (
-        <div className="space-y-3 mt-3">
-          {sessions.map((session) => (
-            <SessionCard
-              key={session.id}
-              session={session}
+        <div className="mt-3">
+          {weekOrder.map((w) => (
+            <WeekGroup
+              key={w}
+              weekNumber={w}
+              sessions={byWeek.get(w)}
               onChange={onChange}
             />
           ))}
         </div>
       )}
     </section>
+  );
+}
+
+// ============================================================================
+// Week group — a week's sessions with drag-to-reorder.
+//
+// Dragging starts only from the grip handle, so it never clashes with the
+// edit / delete / add-exercise controls inside a card. On drop, day_index is
+// rewritten sequentially within the week and persisted through the existing
+// /api/program-sessions/[id] PATCH; onChange() then refetches the authoritative
+// order. Moving a session to a different week stays in the edit form, which
+// already supports it.
+// ============================================================================
+function WeekGroup({ weekNumber, sessions, onChange }) {
+  const [order, setOrder] = useState(sessions);
+  const [dragIndex, setDragIndex] = useState(null);
+  const [overIndex, setOverIndex] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  // Resync to server order whenever the parent refetches.
+  useEffect(() => { setOrder(sessions); }, [sessions]);
+
+  const canReorder = order.length > 1;
+
+  function reset() {
+    setDragIndex(null);
+    setOverIndex(null);
+  }
+
+  function handleDragStart(e, index) {
+    setDragIndex(index);
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', String(index)); } catch {}
+  }
+
+  function handleDragOver(e, index) {
+    if (dragIndex === null) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (index !== overIndex) setOverIndex(index);
+  }
+
+  function handleDrop(e, index) {
+    e.preventDefault();
+    if (dragIndex === null || dragIndex === index) { reset(); return; }
+    const next = [...order];
+    const [moved] = next.splice(dragIndex, 1);
+    next.splice(index, 0, moved);
+    setOrder(next); // optimistic
+    reset();
+    persist(next);
+  }
+
+  async function persist(next) {
+    const updates = [];
+    next.forEach((s, i) => {
+      const day = i + 1;
+      if (s.day_index !== day) updates.push({ id: s.id, day_index: day });
+    });
+    if (updates.length === 0) return;
+
+    setSaving(true);
+    try {
+      await Promise.all(updates.map((u) =>
+        fetch(`/api/program-sessions/${u.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ day_index: u.day_index }),
+        }),
+      ));
+    } catch {
+      // Best-effort — the refetch below resyncs to server truth regardless.
+    } finally {
+      setSaving(false);
+      onChange();
+    }
+  }
+
+  return (
+    <div className="mb-6 last:mb-0">
+      <div className="flex items-center gap-3 mb-2 px-1">
+        <span className="font-['Montserrat'] font-bold text-[11px] text-[#0A2540] uppercase tracking-[2px]">
+          Week {weekNumber}
+        </span>
+        <span className="h-px flex-1 bg-[#E2E6EB]" />
+        {saving
+          ? <span className="font-['Inter'] text-[10px] text-[#8A95A3] uppercase tracking-[1.5px]">Saving order…</span>
+          : canReorder
+            ? <span className="font-['Inter'] text-[10px] text-[#8A95A3] uppercase tracking-[1.5px]">Drag to reorder</span>
+            : null}
+      </div>
+
+      <div className="space-y-3">
+        {order.map((session, index) => (
+          <div
+            key={session.id}
+            onDragOver={(e) => handleDragOver(e, index)}
+            onDrop={(e) => handleDrop(e, index)}
+            className={`flex items-stretch gap-2 rounded-[6px] transition-all ${
+              dragIndex === index ? 'opacity-40' : ''
+            } ${
+              overIndex === index && dragIndex !== null && dragIndex !== index
+                ? 'ring-2 ring-[#D92D20] ring-offset-2'
+                : ''
+            }`}
+          >
+            {canReorder && (
+              <div
+                draggable
+                onDragStart={(e) => handleDragStart(e, index)}
+                onDragEnd={reset}
+                title="Drag to reorder"
+                aria-label="Drag to reorder session"
+                className="flex-shrink-0 w-7 self-stretch grid place-items-center rounded-[4px] bg-[#F4F6F8] hover:bg-[#E2E6EB] text-[#8A95A3] cursor-grab active:cursor-grabbing transition-colors"
+              >
+                <GripIcon />
+              </div>
+            )}
+            <div className="flex-1 min-w-0">
+              <SessionCard session={session} onChange={onChange} />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -1121,6 +1320,19 @@ function TrashIcon() {
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <polyline points="3 6 5 6 21 6" />
       <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+    </svg>
+  );
+}
+
+function GripIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <circle cx="9" cy="6" r="1.6" />
+      <circle cx="15" cy="6" r="1.6" />
+      <circle cx="9" cy="12" r="1.6" />
+      <circle cx="15" cy="12" r="1.6" />
+      <circle cx="9" cy="18" r="1.6" />
+      <circle cx="15" cy="18" r="1.6" />
     </svg>
   );
 }

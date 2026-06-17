@@ -8,6 +8,8 @@
  *         archives any other active programmes for the same client so
  *         "active" means exactly one current programme per athlete.
  *
+ * DELETE — Permanently remove a programme and all of its sessions.
+ *
  * Sessions are sorted by week_number then day_index so the editor renders
  * them in training order without needing to sort client-side.
  *
@@ -190,5 +192,60 @@ export async function PATCH(req, context) {
     {
       headers: { 'Cache-Control': 'no-store, max-age=0, must-revalidate' },
     },
+  );
+}
+
+// ============================================================================
+// DELETE — remove a programme and all of its sessions
+// ============================================================================
+export async function DELETE(_req, context) {
+  noStore();
+  const params = await context.params;
+  const programId = params?.programId;
+
+  if (!programId || typeof programId !== 'string') {
+    return NextResponse.json({ error: 'programId required.' }, { status: 400 });
+  }
+
+  // Confirm it exists first so we can return a clean 404 rather than a silent no-op.
+  const { data: existing, error: findErr } = await supabase
+    .from('programs')
+    .select('id')
+    .eq('id', programId)
+    .maybeSingle();
+
+  if (findErr) {
+    console.error('[program] delete lookup failed', findErr);
+    return NextResponse.json({ error: 'Could not delete programme.' }, { status: 500 });
+  }
+  if (!existing) {
+    return NextResponse.json({ error: 'Programme not found.' }, { status: 404 });
+  }
+
+  // Remove child sessions first so we don't depend on a DB cascade being declared,
+  // then the programme itself.
+  const { error: sessErr } = await supabase
+    .from('program_sessions')
+    .delete()
+    .eq('program_id', programId);
+
+  if (sessErr) {
+    console.error('[program] session delete failed', sessErr);
+    return NextResponse.json({ error: 'Could not delete programme sessions.' }, { status: 500 });
+  }
+
+  const { error: progErr } = await supabase
+    .from('programs')
+    .delete()
+    .eq('id', programId);
+
+  if (progErr) {
+    console.error('[program] delete failed', progErr);
+    return NextResponse.json({ error: 'Could not delete programme.' }, { status: 500 });
+  }
+
+  return NextResponse.json(
+    { ok: true },
+    { headers: { 'Cache-Control': 'no-store, max-age=0, must-revalidate' } },
   );
 }
