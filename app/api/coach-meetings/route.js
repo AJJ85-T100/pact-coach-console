@@ -11,6 +11,27 @@ import { supabaseAdmin as supabase } from '@/lib/supabase/admin';
 
 export const dynamic = 'force-dynamic';
 
+export async function GET(req) {
+  noStore();
+  const { searchParams } = new URL(req.url);
+  const clientId = searchParams.get('clientId');
+  if (!clientId) {
+    return NextResponse.json({ error: 'clientId required.' }, { status: 400 });
+  }
+  const { data, error } = await supabase
+    .from('coach_meetings')
+    .select('id, met_at, note')
+    .eq('client_id', clientId)
+    .order('met_at', { ascending: false })
+    .limit(10);
+
+  if (error) {
+    console.error('[coach-meetings] list failed', error);
+    return NextResponse.json({ error: 'Could not load meetings.' }, { status: 500 });
+  }
+  return NextResponse.json({ meetings: data || [] }, { headers: { 'Cache-Control': 'no-store' } });
+}
+
 export async function POST(req) {
   noStore();
 

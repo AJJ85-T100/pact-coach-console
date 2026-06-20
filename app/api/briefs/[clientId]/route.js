@@ -122,6 +122,19 @@ async function generate(clientId) {
 
   const daysSince = Math.max(0, Math.round((Date.now() - new Date(sinceISO).getTime()) / 86400000));
 
+  // --- Glanceable stats (surfaced to the UI; no extra AI cost) ---
+  const adherencePct = winTotal > 0 ? Math.round((wins / winTotal) * 100) : null;
+  const topStreak = (customRes.data || []).reduce((m, p) => Math.max(m, p.current_streak || 0), 0);
+  const stats = {
+    adherence_pct: adherencePct,
+    wins,
+    win_total: winTotal,
+    days_logged: daysLogged,
+    slip_days: slipDays,
+    top_streak: topStreak,
+    custom_pacts: (customRes.data || []).length,
+  };
+
   // --- Build the prompt ---
   const dataBlock = `CLIENT
 Name: ${client.name || 'Unknown'}
@@ -210,7 +223,8 @@ Return ONLY valid JSON — no preamble, no markdown fences — matching exactly:
   return NextResponse.json(
     {
       client: { id: client.id, name: client.name },
-      since: { at: sinceISO, days_ago: daysSince, logged: !!lastMeeting },
+      since: { at: sinceISO, days_ago: daysSince, logged: !!lastMeeting, note: lastMeeting?.note || null },
+      stats,
       generated_at: new Date().toISOString(),
       brief,
     },
