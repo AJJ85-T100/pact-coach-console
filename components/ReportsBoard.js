@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 const STATUS = {
   strong: { label: 'Strong', color: '#0F8A5F', fill: true },
@@ -25,6 +25,16 @@ export default function ReportsBoard({ clients, ptName }) {
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState(clients?.[0]?.id || null);
   const [reports, setReports] = useState({}); // `${id}:${week}` -> { loading, error, data }
+  const [panelWidth, setPanelWidth] = useState(400);
+  const panelWidthRef = useRef(400);
+  const draggingRef = useRef(false);
+
+  function startDrag(e) {
+    e.preventDefault();
+    draggingRef.current = true;
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+  }
 
   async function fetchRoster(week) {
     setRosterLoading(true);
@@ -73,7 +83,38 @@ export default function ReportsBoard({ clients, ptName }) {
   useEffect(() => {
     fetchRoster(0);
     if (selectedId) loadReport(selectedId, 0);
+    try {
+      const saved = parseInt(localStorage.getItem('pax_reports_panel_w') || '', 10);
+      if (saved >= 320 && saved <= 720) {
+        setPanelWidth(saved);
+        panelWidthRef.current = saved;
+      }
+    } catch {}
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    function onMove(e) {
+      if (!draggingRef.current) return;
+      const w = Math.min(720, Math.max(320, window.innerWidth - e.clientX));
+      panelWidthRef.current = w;
+      setPanelWidth(w);
+    }
+    function onUp() {
+      if (!draggingRef.current) return;
+      draggingRef.current = false;
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      try {
+        localStorage.setItem('pax_reports_panel_w', String(panelWidthRef.current));
+      } catch {}
+    }
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
   }, []);
 
   const rosterClients = roster?.clients || (clients || []).map((c) => ({ id: c.id, name: c.name, status: 'on_track', stats: {} }));
@@ -140,8 +181,17 @@ export default function ReportsBoard({ clients, ptName }) {
         </div>
       </div>
 
+      {/* Resizer */}
+      <div
+        onPointerDown={startDrag}
+        role="separator"
+        aria-orientation="vertical"
+        title="Drag to resize"
+        className="w-1.5 flex-shrink-0 cursor-col-resize bg-[#E2E6EB] hover:bg-[#D92D20] active:bg-[#D92D20] transition-colors"
+      />
+
       {/* Detail panel */}
-      <div className="w-[400px] flex-shrink-0 border-l border-[#E2E6EB] overflow-y-auto bg-[#F4F6F8] p-6">
+      <div className="flex-shrink-0 border-l border-[#E2E6EB] overflow-y-auto bg-[#F4F6F8] p-6" style={{ width: panelWidth }}>
         {!selected ? (
           <p className="font-['Inter'] text-[#8A95A3]">Select an athlete.</p>
         ) : (
