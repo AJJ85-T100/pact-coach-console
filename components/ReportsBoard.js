@@ -317,6 +317,9 @@ function DetailPanel({ client, state, onRetry }) {
             <div className="font-['Montserrat'] font-extrabold text-[19px] leading-[1.15] text-[#0A2540] mt-2.5">{report.headline}</div>
           </div>
 
+          {/* Adherence trend */}
+          <TrendChart history={data?.history} color={m?.color || '#0F8A5F'} />
+
           {/* Stat grid */}
           {rstats && (
             <div className="grid grid-cols-3 gap-2 mb-4">
@@ -363,6 +366,58 @@ function DetailPanel({ client, state, onRetry }) {
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+function TrendChart({ history, color }) {
+  const all = Array.isArray(history) ? history : [];
+  const pts = all.map((h, i) => ({ pct: h.pct, i, week_start: h.week_start })).filter((p) => p.pct != null);
+
+  if (pts.length < 2) {
+    return (
+      <div className="bg-white border border-[#E2E6EB] rounded-[10px] p-4 mb-4">
+        <div className="font-['Inter'] text-[10px] font-bold uppercase tracking-[0.14em] text-[#8A95A3] mb-1">Adherence · last 8 weeks</div>
+        <div className="font-['Inter'] text-[12px] text-[#8A95A3]">Not enough history yet — the trend fills in as the weeks log.</div>
+      </div>
+    );
+  }
+
+  const W = 320, H = 96, padL = 4, padR = 6, padT = 12, padB = 18;
+  const innerW = W - padL - padR, innerH = H - padT - padB;
+  const span = (all.length - 1) || 1;
+  const X = (i) => padL + (i / span) * innerW;
+  const Y = (pct) => padT + (1 - pct / 100) * innerH;
+  const linePts = pts.map((p) => `${X(p.i).toFixed(1)},${Y(p.pct).toFixed(1)}`).join(' ');
+  const base = (padT + innerH).toFixed(1);
+  const areaPts = `${X(pts[0].i).toFixed(1)},${base} ${linePts} ${X(pts[pts.length - 1].i).toFixed(1)},${base}`;
+  const last = pts[pts.length - 1];
+  const first = pts[0];
+  const delta = last.pct - first.pct;
+  const fmt = (ds) => new Date(ds).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+
+  return (
+    <div className="bg-white border border-[#E2E6EB] rounded-[10px] p-4 mb-4">
+      <div className="flex items-baseline justify-between mb-2">
+        <div className="font-['Inter'] text-[10px] font-bold uppercase tracking-[0.14em] text-[#8A95A3]">Adherence · last 8 weeks</div>
+        {delta !== 0 && (
+          <div className="font-['Montserrat'] font-extrabold text-[12px]" style={{ color: delta > 0 ? '#0F8A5F' : '#D92D20' }}>
+            {delta > 0 ? '▲' : '▼'} {Math.abs(delta)} pts
+          </div>
+        )}
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" className="block" role="img" aria-label={`Adherence trend over ${pts.length} weeks, ${first.pct}% to ${last.pct}%`}>
+        {[0, 50, 100].map((g) => (
+          <line key={g} x1={padL} x2={W - padR} y1={Y(g)} y2={Y(g)} stroke="#EEF1F4" strokeWidth="1" />
+        ))}
+        <polygon points={areaPts} fill={color} fillOpacity="0.10" />
+        <polyline points={linePts} fill="none" stroke={color} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+        <circle cx={X(last.i)} cy={Y(last.pct)} r="4.5" fill="#fff" />
+        <circle cx={X(last.i)} cy={Y(last.pct)} r="3" fill={color} />
+        <text x={X(last.i)} y={Y(last.pct) - 7} fontFamily="Montserrat, sans-serif" fontWeight="800" fontSize="11" fill={color} textAnchor="end">{last.pct}%</text>
+        <text x={padL} y={H - 4} fontFamily="Inter, sans-serif" fontSize="9" fill="#8A95A3">{fmt(first.week_start)}</text>
+        <text x={W - padR} y={H - 4} fontFamily="Inter, sans-serif" fontSize="9" fill="#8A95A3" textAnchor="end">this week</text>
+      </svg>
     </div>
   );
 }

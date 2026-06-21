@@ -57,9 +57,10 @@ async function generate(clientId, weeksAgo = 0) {
   const thisStartDate = thisStartISO.slice(0, 10);
   const thisEndDate = thisEndISO.slice(0, 10);
   const prevStartDate = prevStartISO.slice(0, 10);
+  const histStartDate = new Date(end - 56 * DAY).toISOString().slice(0, 10);
 
   // --- Data (parallel) ---
-  const [thisRes, prevRes, customRes, convRes, progRes] = await Promise.all([
+  const [thisRes, prevRes, customRes, convRes, progRes, histRes] = await Promise.all([
     supabase.from('daily_pacts')
       .select('date, wins_completed, total_wins, status, impact_message')
       .eq('client_id', clientId).gt('date', thisStartDate).lte('date', thisEndDate).order('date', { ascending: true }),
@@ -75,6 +76,9 @@ async function generate(clientId, weeksAgo = 0) {
       .order('created_at', { ascending: true }).limit(60),
     supabase.from('programs')
       .select('id, name, weeks, status').eq('client_id', clientId).eq('status', 'active').limit(1),
+    supabase.from('daily_pacts')
+      .select('date, wins_completed, total_wins')
+      .eq('client_id', clientId).gt('date', histStartDate).lte('date', thisEndDate).order('date', { ascending: true }),
   ]);
 
   const thisWeek = thisRes.data || [];
@@ -84,6 +88,18 @@ async function generate(clientId, weeksAgo = 0) {
   const daysLogged = thisWeek.length;
   const slipDays = thisWeek.filter((d) => (d.status && d.status !== 'kept') || (d.total_wins && d.wins_completed < d.total_wins)).length;
   const topStreak = (customRes.data || []).reduce((m, p) => Math.max(m, p.current_streak || 0), 0);
+
+  // 8-week adherence history, oldest → newest (newest = current window).
+  const histRows = histRes.data || [];
+  const WEEKS = 8;
+  const history = [];
+  for (let i = 0; i < WEEKS; i++) {
+    const wEndMs = end - (WEEKS - 1 - i) * 7 * DAY;
+    const wStart = new Date(wEndMs - 7 * DAY).toISOString().slice(0, 10);
+    const wEnd = new Date(wEndMs).toISOString().slice(0, 10);
+    const rows = histRows.filter((r) => r.date > wStart && r.date <= wEnd);
+    history.push({ week_start: wStart, pct: adherence(rows).pct, days: rows.length });
+  }
 
   const customPacts = (customRes.data || [])
     .map((p) => `${p.name} (${p.rule}) — streak ${p.current_streak ?? 0}, status ${p.status || 'active'}`)
@@ -182,6 +198,7 @@ Return ONLY valid JSON — no preamble, no markdown fences — matching exactly:
         top_streak: topStreak,
       },
       generated_at: new Date().toISOString(),
+      history,
       report,
     },
     { headers: { 'Cache-Control': 'no-store, max-age=0, must-revalidate' } },

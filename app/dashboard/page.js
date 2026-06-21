@@ -39,7 +39,7 @@ function timeAgo(iso) {
 // + a type used for the activity icon. The trailing ISO date is stripped
 // because the timestamp already carries it.
 function parseBotEvent(key) {
-  if (!key) return { text: 'logged a milestone', type: 'generic' };
+  if (!key) return { text: 'reached a milestone', type: 'milestone' };
   const k = String(key).replace(/[\s_-]?\d{4}-\d{2}-\d{2}\s*$/, '').trim();
   const low = k.toLowerCase();
 
@@ -47,6 +47,12 @@ function parseBotEvent(key) {
   if (steps) return { text: `hit ${Number(steps[1]).toLocaleString('en-GB')} steps`, type: 'steps' };
 
   if (/bad[\s_-]?week/.test(low)) return { text: 'flagged a tough week', type: 'badweek' };
+
+  if (/anniversary|milestone/.test(low)) {
+    const u = low.match(/(\d+)\s*(year|month|week|day)/);
+    if (u) return { text: `reached their ${u[1]}-${u[2]} milestone`, type: 'anniversary' };
+    return { text: 'reached a milestone', type: 'anniversary' };
+  }
 
   if (/streak/.test(low)) {
     const n = (low.match(/(\d+)/) || [])[1];
@@ -58,8 +64,13 @@ function parseBotEvent(key) {
     return { text: lift ? `hit a ${lift} PR` : 'hit a new PR', type: 'pr' };
   }
 
-  const human = k.replace(/[_-]/g, ' ').trim().replace(/\b\w/g, c => c.toUpperCase());
-  return { text: human || 'logged a milestone', type: 'generic' };
+  // Generic milestone: humanise + split digits from letters ("9months" → "9 months").
+  const human = k.replace(/[_-]/g, ' ')
+    .replace(/(\d)([a-z])/gi, '$1 $2')
+    .replace(/([a-z])(\d)/gi, '$1 $2')
+    .trim()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+  return { text: human || 'reached a milestone', type: 'milestone' };
 }
 
 function humaniseSlipType(type) {
@@ -486,6 +497,8 @@ function Sparkline({ series, stroke }) {
     .map((v, i) => ({ v, i }))
     .filter(p => p.v != null);
   if (pts.length < 2) return null;
+  // No variance (e.g. a flat all-zero pre-pilot week) → nothing worth drawing.
+  if (pts.every(p => p.v === pts[0].v)) return null;
 
   const W = 52, H = 16, span = (series.length - 1) || 1;
   const xy = (p) => {
@@ -656,13 +669,14 @@ function ActivityFeed({ events, clientById }) {
               <ul className="divide-y divide-border">
                 {g.items.map((e, i) => {
                   const c = clientById[e.clientId];
+                  const celebratory = e.kind === 'pr' || e.kind === 'anniversary' || e.kind === 'milestone' || e.kind === 'streak';
                   return (
-                    <li key={i} className="px-5 py-3 flex items-start gap-3">
+                    <li key={i} className={`px-5 py-3 flex items-start gap-3 ${celebratory ? 'bg-emerald-50' : ''}`}>
                       <ActivityIcon kind={e.kind} />
                       <div className="min-w-0 flex-1">
-                        <div className="text-sm text-blue leading-snug">
-                          <span className="font-semibold">{c?.name?.split(' ')[0] || 'Athlete'}</span>{' '}
-                          <span className="text-body">{e.text}</span>
+                        <div className="text-sm leading-snug">
+                          <span className="font-semibold text-blue">{c?.name?.split(' ')[0] || 'Athlete'}</span>{' '}
+                          <span className={celebratory ? 'text-blue font-medium' : 'text-body'}>{e.text}</span>
                         </div>
                         <div className="text-[10px] text-muted tracking-wide uppercase mt-0.5">
                           {timeAgo(e.when)}
@@ -682,13 +696,15 @@ function ActivityFeed({ events, clientById }) {
 
 function ActivityIcon({ kind }) {
   const map = {
-    pr:       { bg: 'bg-red',         char: '★', tx: 'text-white' },
-    steps:    { bg: 'bg-emerald-500', char: '↑', tx: 'text-white' },
-    streak:   { bg: 'bg-red',         char: '◆', tx: 'text-white' },
-    badweek:  { bg: 'bg-warn',        char: '!', tx: 'text-white' },
-    slip:     { bg: 'bg-warn',        char: '!', tx: 'text-white' },
-    message:  { bg: 'bg-blue',        char: '“', tx: 'text-white' },
-    generic:  { bg: 'bg-blue',        char: '•', tx: 'text-white' },
+    pr:          { bg: 'bg-emerald-500', char: '★', tx: 'text-white' },
+    anniversary: { bg: 'bg-emerald-500', char: '★', tx: 'text-white' },
+    milestone:   { bg: 'bg-emerald-500', char: '★', tx: 'text-white' },
+    streak:      { bg: 'bg-emerald-500', char: '◆', tx: 'text-white' },
+    steps:       { bg: 'bg-blue',        char: '↑', tx: 'text-white' },
+    badweek:     { bg: 'bg-warn',        char: '!', tx: 'text-white' },
+    slip:        { bg: 'bg-warn',        char: '!', tx: 'text-white' },
+    message:     { bg: 'bg-blue',        char: '“', tx: 'text-white' },
+    generic:     { bg: 'bg-blue',        char: '•', tx: 'text-white' },
   };
   const m = map[kind] || map.generic;
   return (
