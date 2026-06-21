@@ -2,213 +2,314 @@
 
 import { useEffect, useState } from 'react';
 
+const STATUS = {
+  strong: { label: 'Strong', color: '#0F8A5F', fill: true },
+  on_track: { label: 'On track', color: '#0A2540', fill: false },
+  watch: { label: 'Watch', color: '#D97706', fill: true },
+  at_risk: { label: 'At risk', color: '#D92D20', fill: true },
+};
+const statusOf = (k) => STATUS[String(k || '').toLowerCase()] || STATUS.on_track;
+
 const MOMENTUM = {
   building: { label: 'Building', color: '#0F8A5F', bg: '#E7F4EF' },
   steady: { label: 'Steady', color: '#0A2540', bg: '#EBF1F5' },
   slipping: { label: 'Slipping', color: '#D97706', bg: '#FDF1E3' },
   stalled: { label: 'Stalled', color: '#D92D20', bg: '#FBE9E7' },
 };
-
-function momentumOf(key) {
-  return MOMENTUM[String(key || '').toLowerCase()] || MOMENTUM.steady;
-}
+const momentumOf = (k) => MOMENTUM[String(k || '').toLowerCase()] || MOMENTUM.steady;
 
 export default function ReportsBoard({ clients, ptName }) {
+  const [weeksAgo, setWeeksAgo] = useState(0);
+  const [roster, setRoster] = useState(null); // { summary, clients, week_ending }
+  const [rosterLoading, setRosterLoading] = useState(true);
+  const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState(clients?.[0]?.id || null);
-  const [reports, setReports] = useState({}); // id -> { loading, error, data }
+  const [reports, setReports] = useState({}); // `${id}:${week}` -> { loading, error, data }
 
-  async function loadReport(id) {
-    setReports((r) => ({ ...r, [id]: { loading: true } }));
+  async function fetchRoster(week) {
+    setRosterLoading(true);
     try {
-      const res = await fetch(`/api/reports/${id}`, { cache: 'no-store' });
+      const res = await fetch(`/api/reports/roster?weeks_ago=${week}`, { cache: 'no-store' });
+      const j = await res.json();
+      setRoster(j);
+      if (!selectedId && j.clients?.[0]) setSelectedId(j.clients[0].id);
+    } catch {
+      setRoster({ summary: {}, clients: [], week_ending: null });
+    } finally {
+      setRosterLoading(false);
+    }
+  }
+
+  async function loadReport(id, week) {
+    const key = `${id}:${week}`;
+    setReports((r) => ({ ...r, [key]: { loading: true } }));
+    try {
+      const res = await fetch(`/api/reports/${id}?weeks_ago=${week}`, { cache: 'no-store' });
       const j = await res.json();
       if (!res.ok) throw new Error(j.error || 'Could not generate report.');
-      setReports((r) => ({ ...r, [id]: { data: j } }));
+      setReports((r) => ({ ...r, [key]: { data: j } }));
     } catch (e) {
-      setReports((r) => ({ ...r, [id]: { error: e.message } }));
+      setReports((r) => ({ ...r, [key]: { error: e.message } }));
     }
   }
 
   function selectClient(id) {
     setSelectedId(id);
-    if (!reports[id] || reports[id].error) loadReport(id);
+    const key = `${id}:${weeksAgo}`;
+    if (!reports[key] || reports[key].error) loadReport(id, weeksAgo);
+  }
+
+  function changeWeek(delta) {
+    const next = Math.max(0, weeksAgo + delta);
+    if (next === weeksAgo) return;
+    setWeeksAgo(next);
+    fetchRoster(next);
+    if (selectedId) {
+      const key = `${selectedId}:${next}`;
+      if (!reports[key]) loadReport(selectedId, next);
+    }
   }
 
   useEffect(() => {
-    if (selectedId && !reports[selectedId]) loadReport(selectedId);
+    fetchRoster(0);
+    if (selectedId) loadReport(selectedId, 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const selected = clients.find((c) => c.id === selectedId) || null;
-  const state = selectedId ? reports[selectedId] : null;
-
-  const today = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long' });
+  const rosterClients = roster?.clients || (clients || []).map((c) => ({ id: c.id, name: c.name, status: 'on_track', stats: {} }));
+  const filtered = rosterClients.filter((c) => (c.name || '').toLowerCase().includes(search.toLowerCase()));
+  const selected = rosterClients.find((c) => c.id === selectedId) || null;
+  const state = selectedId ? reports[`${selectedId}:${weeksAgo}`] : null;
+  const s = roster?.summary || {};
 
   return (
     <div className="flex h-screen">
-      {/* Roster column */}
-      <div className="w-[340px] flex-shrink-0 border-r border-[#E2E6EB] overflow-y-auto p-6 bg-white">
-        <div className="inline-block pt-2 border-t-2 border-[#D92D20] mb-3">
-          <span className="font-['Inter'] font-semibold text-[11px] text-[#D92D20] uppercase tracking-[2.5px]">This week</span>
-        </div>
-        <h1 className="font-['Montserrat'] font-extrabold text-2xl text-[#0A2540] uppercase tracking-tight leading-none mb-1">
-          PAX reports
-        </h1>
-        <p className="font-['Inter'] text-[13px] text-[#4A4A4A] mb-6">The week behind, per athlete · {today}</p>
-
-        {clients.length === 0 ? (
-          <p className="font-['Inter'] text-[13px] text-[#8A95A3]">No athletes yet.</p>
-        ) : (
-          <div className="space-y-2">
-            {clients.map((c) => (
-              <ReportCard
-                key={c.id}
-                client={c}
-                selected={c.id === selectedId}
-                report={reports[c.id]?.data?.report}
-                loading={reports[c.id]?.loading}
-                onSelect={selectClient}
-              />
-            ))}
+      {/* Roster side */}
+      <div className="flex-1 min-w-0 overflow-y-auto bg-white">
+        <div className="p-6 sm:p-8 max-w-4xl">
+          {/* Header */}
+          <div className="flex items-start justify-between gap-4 mb-1">
+            <div>
+              <div className="font-['Inter'] font-semibold text-[11px] text-[#D92D20] uppercase tracking-[2.5px] mb-1">Auto-generated · weekly</div>
+              <h1 className="font-['Montserrat'] font-extrabold text-[28px] text-[#0A2540] uppercase tracking-tight leading-none">PAX reports</h1>
+            </div>
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search athletes…"
+              className="font-['Inter'] text-[13px] text-[#0A2540] bg-[#F4F6F8] border border-[#E2E6EB] rounded-[8px] px-4 py-2.5 w-[240px] focus:outline-none focus:border-[#D92D20]"
+            />
           </div>
-        )}
+
+          {/* Week nav */}
+          <div className="flex items-center justify-center gap-4 my-5 py-3 border-y border-[#E2E6EB]">
+            <button onClick={() => changeWeek(1)} className="w-9 h-9 grid place-items-center rounded-[6px] border border-[#E2E6EB] hover:border-[#0A2540] text-[#0A2540] transition-colors">←</button>
+            <div className="text-center">
+              <div className="font-['Montserrat'] font-bold text-[15px] text-[#0A2540]">
+                {weeksAgo === 0 ? 'This week' : `Week ending ${fmtLong(roster?.week_ending)}`}
+              </div>
+              <div className="font-['Inter'] text-[12px] text-[#8A95A3]">
+                {rosterLoading ? 'loading…' : `${s.total || 0} ${s.total === 1 ? 'athlete' : 'athletes'} reported`}
+              </div>
+            </div>
+            <button onClick={() => changeWeek(-1)} disabled={weeksAgo === 0} className="w-9 h-9 grid place-items-center rounded-[6px] border border-[#E2E6EB] enabled:hover:border-[#0A2540] text-[#0A2540] disabled:opacity-30 transition-colors">→</button>
+          </div>
+
+          {/* Summary row */}
+          <div className="flex flex-wrap gap-x-8 gap-y-3 mb-6">
+            <Summary n={s.strong} label="Strong" color={STATUS.strong.color} />
+            <Summary n={s.on_track} label="On track" color="#0A2540" />
+            <Summary n={s.watch} label="Watch" color={STATUS.watch.color} />
+            <Summary n={s.at_risk} label="At risk" color={STATUS.at_risk.color} />
+            <Summary n={`${s.pacts_kept ?? 0}/${s.pacts_total ?? 0}`} label="Pacts kept" />
+            <Summary n={avgAdh(rosterClients)} label="Avg adherence" />
+          </div>
+
+          {/* Roster rows */}
+          {rosterLoading && !roster ? (
+            <p className="font-['Inter'] text-[13px] text-[#8A95A3]">Loading roster…</p>
+          ) : filtered.length === 0 ? (
+            <p className="font-['Inter'] text-[13px] text-[#8A95A3]">No athletes match.</p>
+          ) : (
+            <div className="space-y-2">
+              {filtered.map((c) => (
+                <RosterRow key={c.id} client={c} selected={c.id === selectedId} onSelect={selectClient} />
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* Report panel */}
-      <div className="flex-1 overflow-y-auto p-6 sm:p-8 min-w-0 bg-[#F4F6F8]">
+      {/* Detail panel */}
+      <div className="w-[400px] flex-shrink-0 border-l border-[#E2E6EB] overflow-y-auto bg-[#F4F6F8] p-6">
         {!selected ? (
-          <p className="font-['Inter'] text-[#8A95A3]">Select an athlete to read their week.</p>
+          <p className="font-['Inter'] text-[#8A95A3]">Select an athlete.</p>
         ) : (
-          <ReportPanel client={selected} state={state} onRetry={() => loadReport(selected.id)} />
+          <DetailPanel client={selected} state={state} onRetry={() => loadReport(selected.id, weeksAgo)} />
         )}
       </div>
     </div>
   );
 }
 
-function ReportCard({ client, selected, report, loading, onSelect }) {
+function Summary({ n, label, color }) {
+  return (
+    <div>
+      <div className="font-['Montserrat'] font-extrabold text-[26px] leading-none" style={{ color: color || '#0A2540' }}>{n ?? 0}</div>
+      <div className="font-['Inter'] text-[10px] font-bold uppercase tracking-[0.12em] text-[#8A95A3] mt-1">{label}</div>
+    </div>
+  );
+}
+
+function RosterRow({ client, selected, onSelect }) {
   const initials = (client.name || '?').split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
-  const m = report ? momentumOf(report.momentum) : null;
+  const st = statusOf(client.status);
+  const stats = client.stats || {};
   return (
     <button
       onClick={() => onSelect(client.id)}
-      className={`w-full text-left flex items-start gap-3 p-3 rounded-[8px] border transition-colors ${
-        selected ? 'border-[#D92D20] border-2 bg-white' : 'border-[#E2E6EB] bg-white hover:bg-[#F4F6F8]'
+      className={`w-full text-left flex items-center gap-4 bg-white rounded-[8px] border pl-0 pr-4 py-3 transition-colors overflow-hidden ${
+        selected ? 'border-[#0A2540] border-2' : 'border-[#E2E6EB] hover:bg-[#F4F6F8]'
       }`}
     >
-      <div className="w-10 h-10 rounded-[6px] bg-[#0A2540] text-white grid place-items-center font-['Montserrat'] font-bold text-[13px] flex-shrink-0">
-        {initials}
+      <span className="self-stretch w-[4px] flex-shrink-0" style={{ background: st.color }} />
+      <div className="w-10 h-10 rounded-[6px] bg-[#0A2540] text-white grid place-items-center font-['Montserrat'] font-bold text-[13px] flex-shrink-0">{initials}</div>
+      <div className="min-w-0 w-[150px] flex-shrink-0">
+        <div className="font-['Montserrat'] font-bold text-[14px] text-[#0A2540] truncate">{client.name}</div>
+        <div className="font-['Inter'] text-[11px] text-[#8A95A3] truncate">
+          {client.program_name ? `${client.program_name}${client.program_week ? ` · Wk ${client.program_week}/${client.program_weeks || '?'}` : ''}` : (client.goal || '—')}
+        </div>
       </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="font-['Montserrat'] font-bold text-[14px] text-[#0A2540] truncate">{client.name || 'Unnamed'}</span>
-          {m && <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: m.color }} />}
-        </div>
-        <div className="font-['Inter'] text-[11px] text-[#8A95A3] truncate mt-0.5">
-          {report?.headline ? report.headline : loading ? 'Reading the week\u2026' : (client.status || 'Tap to generate')}
-        </div>
+      <Metric label="Adherence" value={stats.adherencePct == null ? '—' : `${stats.adherencePct}%`} delta={stats.delta} />
+      <Metric label="Pacts" value={stats.total ? `${stats.wins}/${stats.total}` : '—'} />
+      <Metric label="Streak" value={stats.streak > 0 ? stats.streak : '—'} />
+      <div className="ml-auto flex-shrink-0">
+        <StatusPill status={client.status} />
       </div>
     </button>
   );
 }
 
-function ReportPanel({ client, state, onRetry }) {
+function Metric({ label, value, delta }) {
+  return (
+    <div className="hidden sm:block text-center w-[72px] flex-shrink-0">
+      <div className="font-['Montserrat'] font-bold text-[15px] text-[#0A2540] leading-none flex items-center justify-center gap-1">
+        {value}
+        {delta != null && delta !== 0 && (
+          <span className={`text-[11px] ${delta > 0 ? 'text-[#0F8A5F]' : 'text-[#D92D20]'}`}>{delta > 0 ? '↑' : '↓'}</span>
+        )}
+      </div>
+      <div className="font-['Inter'] text-[9px] font-bold uppercase tracking-[0.1em] text-[#8A95A3] mt-1.5">{label}</div>
+    </div>
+  );
+}
+
+function StatusPill({ status }) {
+  const st = statusOf(status);
+  const style = st.fill
+    ? { background: st.color, color: '#fff', border: `1px solid ${st.color}` }
+    : { background: '#fff', color: st.color, border: `1.5px solid ${st.color}` };
+  return (
+    <span className="font-['Inter'] text-[10px] font-bold uppercase tracking-[0.1em] px-3 py-1.5 rounded-[6px] whitespace-nowrap" style={style}>
+      {st.label}
+    </span>
+  );
+}
+
+function DetailPanel({ client, state, onRetry }) {
   const initials = (client.name || '?').split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
   const data = state?.data;
   const report = data?.report;
-  const stats = data?.stats;
+  const rstats = data?.stats;
+  const st = statusOf(client.status);
+  const cs = client.stats || {};
   const m = report ? momentumOf(report.momentum) : null;
 
   return (
-    <div className="max-w-2xl">
+    <div>
       {/* Header */}
-      <div className="flex items-start gap-4 mb-4">
-        <div className="w-14 h-14 rounded-[8px] bg-[#0A2540] text-white grid place-items-center font-['Montserrat'] font-extrabold text-[18px] flex-shrink-0">
-          {initials}
-        </div>
-        <div className="min-w-0 flex-1">
-          <h2 className="font-['Montserrat'] font-extrabold text-2xl text-[#0A2540] uppercase tracking-tight leading-none">{client.name}</h2>
-          <div className="font-['Inter'] text-[13px] text-[#8A95A3] mt-1">Week to {data ? new Date(data.generated_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '\u2014'}</div>
+      <div className="flex items-start gap-3 mb-3">
+        <div className="w-12 h-12 rounded-[8px] bg-[#0A2540] text-white grid place-items-center font-['Montserrat'] font-extrabold text-[16px] flex-shrink-0">{initials}</div>
+        <div className="min-w-0">
+          <h2 className="font-['Montserrat'] font-extrabold text-[20px] text-[#0A2540] uppercase tracking-tight leading-none">{client.name}</h2>
+          <div className="font-['Inter'] text-[12px] text-[#8A95A3] mt-1">
+            {client.goal || 'No goal set'}{client.program_week ? ` · Wk ${client.program_week} of ${client.program_weeks || '?'}` : ''}
+          </div>
         </div>
       </div>
 
+      {/* Status line */}
+      <div className="flex items-center gap-2 mb-4 pb-4 border-b border-[#E2E6EB]">
+        <span className="w-2.5 h-2.5 rounded-full" style={{ background: st.color }} />
+        <span className="font-['Inter'] text-[12px] font-bold uppercase tracking-[0.1em]" style={{ color: st.color }}>{st.label}</span>
+        {cs.adherencePct != null && (
+          <span className="font-['Inter'] text-[12px] text-[#8A95A3]">· {cs.adherencePct}% adherence</span>
+        )}
+      </div>
+
       {state?.loading && (
-        <div className="bg-white border border-[#E2E6EB] rounded-[8px] p-6 text-center">
-          <p className="font-['Inter'] text-[13px] text-[#8A95A3]">PAX is writing the week up\u2026</p>
+        <div className="bg-white border border-[#E2E6EB] rounded-[8px] p-5 text-center">
+          <p className="font-['Inter'] text-[13px] text-[#8A95A3]">PAX is writing the week up…</p>
         </div>
       )}
-
       {state?.error && (
         <div className="bg-white border-l-[3px] border-[#D92D20] rounded-[4px] p-4">
-          <p className="font-['Inter'] text-sm text-[#0A2540]"><span className="font-bold">Couldn\u2019t generate:</span> {state.error}</p>
+          <p className="font-['Inter'] text-sm text-[#0A2540]"><span className="font-bold">Couldn’t generate:</span> {state.error}</p>
           <button onClick={onRetry} className="mt-2 font-['Inter'] font-semibold text-[12px] text-[#D92D20] uppercase tracking-[0.05em]">Try again</button>
         </div>
       )}
 
       {report && (
         <>
-          {/* Headline hero */}
-          <div className="bg-white border border-[#E2E6EB] rounded-[10px] p-6 mb-5" style={{ borderLeft: `4px solid ${m.color}` }}>
-            <div className="flex items-center gap-2 mb-2">
-              <span className="font-['Inter'] text-[10px] font-bold uppercase tracking-[0.14em]" style={{ color: m.color, background: m.bg, padding: '3px 8px', borderRadius: '4px' }}>
-                {m.label}
-              </span>
-            </div>
-            <div className="font-['Montserrat'] font-extrabold text-[26px] leading-[1.1] text-[#0A2540]">{report.headline}</div>
+          {/* Headline */}
+          <div className="bg-white border border-[#E2E6EB] rounded-[10px] p-4 mb-4" style={{ borderLeft: `4px solid ${m.color}` }}>
+            <span className="font-['Inter'] text-[10px] font-bold uppercase tracking-[0.14em]" style={{ color: m.color, background: m.bg, padding: '3px 8px', borderRadius: '4px' }}>{m.label}</span>
+            <div className="font-['Montserrat'] font-extrabold text-[19px] leading-[1.15] text-[#0A2540] mt-2.5">{report.headline}</div>
           </div>
 
-          {/* Stat tiles */}
-          {stats && (
-            <div className="grid grid-cols-4 gap-2 mb-5">
-              <StatTile
-                label="Adherence"
-                value={stats.adherence_pct == null ? '\u2014' : `${stats.adherence_pct}%`}
-                tone={adherenceTone(stats.adherence_pct)}
-                delta={stats.delta}
-              />
-              <StatTile label="Pacts kept" value={`${stats.wins}/${stats.win_total}`} />
-              <StatTile label="Days tracked" value={String(stats.days_logged)} />
-              <StatTile label="Best streak" value={stats.top_streak > 0 ? String(stats.top_streak) : '\u2014'} />
+          {/* Stat grid */}
+          {rstats && (
+            <div className="grid grid-cols-3 gap-2 mb-4">
+              <Tile label="Adherence" value={rstats.adherence_pct == null ? '—' : `${rstats.adherence_pct}%`} tone={adhTone(rstats.adherence_pct)} delta={rstats.delta} />
+              <Tile label="Pacts kept" value={`${rstats.wins}/${rstats.win_total}`} />
+              <Tile label="Days tracked" value={String(rstats.days_logged)} />
+              <Tile label="Best streak" value={rstats.top_streak > 0 ? String(rstats.top_streak) : '—'} />
+              <Tile label="Slip days" value={String(rstats.slip_days)} tone={rstats.slip_days > 2 ? 'warn' : 'neutral'} />
+              {client.current_weight != null && (
+                <Tile label="Weight" value={`${client.current_weight}kg`} sub={client.target_weight ? `→ ${client.target_weight}` : null} />
+              )}
             </div>
           )}
 
           {Array.isArray(report.what_worked) && report.what_worked.length > 0 && (
-            <Section title="What worked">
-              <ul className="bg-white border border-[#E2E6EB] rounded-[8px] px-4">
-                {report.what_worked.map((s, i) => (
-                  <li key={i} className="flex gap-2.5 items-start py-2.5 border-b border-[#E2E6EB] last:border-b-0 font-['Inter'] text-[13.5px] text-[#0A2540] leading-[1.5]">
-                    <span className="text-[#0F8A5F] font-bold flex-shrink-0">\u2713</span>
-                    <span>{s}</span>
-                  </li>
-                ))}
-              </ul>
-            </Section>
+            <Block title="What worked">
+              {report.what_worked.map((x, i) => (
+                <div key={i} className="flex gap-2 items-start font-['Inter'] text-[13px] text-[#0A2540] leading-[1.5] py-1">
+                  <span className="text-[#0F8A5F] font-bold flex-shrink-0">✓</span><span>{x}</span>
+                </div>
+              ))}
+            </Block>
           )}
 
           {Array.isArray(report.what_to_watch) && report.what_to_watch.length > 0 && (
-            <Section title="What to watch">
-              <div className="space-y-2">
-                {report.what_to_watch.map((f, i) => (
-                  <div key={i} className="flex gap-2.5 items-start bg-white border border-[#E2E6EB] border-l-[3px] border-l-[#D97706] rounded-[0_6px_6px_0] p-3 font-['Inter'] text-[13px] text-[#0A2540] leading-[1.45]">
-                    <span className="text-[#D97706] font-extrabold flex-shrink-0">!</span>
-                    <span>{f}</span>
-                  </div>
-                ))}
-              </div>
-            </Section>
+            <Block title="What to watch">
+              {report.what_to_watch.map((x, i) => (
+                <div key={i} className="flex gap-2 items-start bg-white border-l-[3px] border-[#D97706] rounded-[0_4px_4px_0] p-2.5 mb-1.5 font-['Inter'] text-[13px] text-[#0A2540] leading-[1.45]">
+                  <span className="text-[#D97706] font-extrabold flex-shrink-0">!</span><span>{x}</span>
+                </div>
+              ))}
+            </Block>
           )}
 
           {report.recommendation && (
-            <Section title="Next week">
-              <div className="bg-[#EBF1F5] border-l-[3px] border-[#0A2540] rounded-[0_6px_6px_0] p-4 font-['Inter'] text-[13.5px] leading-[1.6] text-[#0A2540]">
-                {report.recommendation}
-              </div>
-            </Section>
+            <Block title="Next week">
+              <div className="bg-[#EBF1F5] border-l-[3px] border-[#0A2540] rounded-[0_6px_6px_0] p-3.5 font-['Inter'] text-[13px] leading-[1.6] text-[#0A2540]">{report.recommendation}</div>
+            </Block>
           )}
 
-          <div className="flex gap-2 mt-6">
-            <a href={`/dashboard/clients/${client.id}/programs`} className="bg-white border border-[#E2E6EB] hover:border-[#0A2540] text-[#0A2540] font-['Inter'] font-semibold text-[11px] uppercase tracking-[0.05em] px-4 py-2.5 rounded-[6px] transition-colors">Open programmes</a>
-            <button onClick={onRetry} className="bg-white border border-[#E2E6EB] hover:border-[#0A2540] text-[#0A2540] font-['Inter'] font-semibold text-[11px] uppercase tracking-[0.05em] px-4 py-2.5 rounded-[6px] transition-colors">Regenerate</button>
+          <div className="flex flex-wrap gap-2 mt-5">
+            <a href={`/dashboard/clients/${client.id}/programs`} className="bg-white border border-[#E2E6EB] hover:border-[#0A2540] text-[#0A2540] font-['Inter'] font-semibold text-[11px] uppercase tracking-[0.05em] px-3.5 py-2.5 rounded-[6px] transition-colors">Open programmes</a>
+            <button onClick={onRetry} className="bg-white border border-[#E2E6EB] hover:border-[#0A2540] text-[#0A2540] font-['Inter'] font-semibold text-[11px] uppercase tracking-[0.05em] px-3.5 py-2.5 rounded-[6px] transition-colors">Regenerate</button>
           </div>
         </>
       )}
@@ -216,33 +317,47 @@ function ReportPanel({ client, state, onRetry }) {
   );
 }
 
-function StatTile({ label, value, tone, delta }) {
+function Tile({ label, value, tone, delta, sub }) {
   const color = tone === 'good' ? 'text-[#0F8A5F]' : tone === 'warn' ? 'text-[#D97706]' : tone === 'bad' ? 'text-[#D92D20]' : 'text-[#0A2540]';
   return (
-    <div className="bg-white border border-[#E2E6EB] rounded-[8px] p-3 text-center">
-      <div className={`font-['Montserrat'] font-extrabold text-2xl leading-none ${color}`}>{value}</div>
+    <div className="bg-white border border-[#E2E6EB] rounded-[8px] p-2.5 text-center">
+      <div className={`font-['Montserrat'] font-extrabold text-[19px] leading-none ${color}`}>{value}</div>
       {delta != null && delta !== 0 && (
-        <div className={`font-['Inter'] text-[10px] font-bold mt-1 ${delta > 0 ? 'text-[#0F8A5F]' : 'text-[#D92D20]'}`}>
-          {delta > 0 ? '\u25b2' : '\u25bc'} {Math.abs(delta)} pts
-        </div>
+        <div className={`font-['Inter'] text-[9px] font-bold mt-0.5 ${delta > 0 ? 'text-[#0F8A5F]' : 'text-[#D92D20]'}`}>{delta > 0 ? '▲' : '▼'} {Math.abs(delta)}</div>
       )}
-      <div className="font-['Inter'] text-[9px] font-bold uppercase tracking-[0.1em] text-[#8A95A3] mt-1.5">{label}</div>
+      {sub && <div className="font-['Inter'] text-[10px] text-[#8A95A3] mt-0.5">{sub}</div>}
+      <div className="font-['Inter'] text-[8px] font-bold uppercase tracking-[0.1em] text-[#8A95A3] mt-1.5">{label}</div>
     </div>
   );
 }
 
-function adherenceTone(pct) {
+function Block({ title, children }) {
+  return (
+    <div className="mb-4">
+      <div className="font-['Montserrat'] font-bold text-[11px] tracking-[0.16em] uppercase text-[#0A2540] mb-2">{title}</div>
+      {children}
+    </div>
+  );
+}
+
+function adhTone(pct) {
   if (pct == null) return 'neutral';
   if (pct >= 70) return 'good';
   if (pct >= 40) return 'warn';
   return 'bad';
 }
 
-function Section({ title, children }) {
-  return (
-    <div className="mb-5">
-      <div className="font-['Montserrat'] font-bold text-[11px] tracking-[0.16em] uppercase text-[#0A2540] mb-2.5">{title}</div>
-      {children}
-    </div>
-  );
+function avgAdh(clients) {
+  const vals = clients.map((c) => c.stats?.adherencePct).filter((v) => v != null);
+  if (!vals.length) return '—';
+  return `${Math.round(vals.reduce((a, b) => a + b, 0) / vals.length)}%`;
+}
+
+function fmtLong(iso) {
+  if (!iso) return '—';
+  try {
+    return new Date(iso).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+  } catch {
+    return iso;
+  }
 }

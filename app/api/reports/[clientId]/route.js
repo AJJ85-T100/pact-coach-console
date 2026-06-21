@@ -26,7 +26,7 @@ function adherence(rows) {
   return { wins, total, pct: total > 0 ? Math.round((wins / total) * 100) : null };
 }
 
-async function generate(clientId) {
+async function generate(clientId, weeksAgo = 0) {
   if (!clientId || typeof clientId !== 'string') {
     return NextResponse.json({ error: 'clientId required.' }, { status: 400 });
   }
@@ -50,25 +50,28 @@ async function generate(clientId) {
   }
 
   const now = Date.now();
-  const thisStartISO = new Date(now - 7 * DAY).toISOString();
-  const prevStartISO = new Date(now - 14 * DAY).toISOString();
+  const end = now - weeksAgo * 7 * DAY;
+  const thisStartISO = new Date(end - 7 * DAY).toISOString();
+  const thisEndISO = new Date(end).toISOString();
+  const prevStartISO = new Date(end - 14 * DAY).toISOString();
   const thisStartDate = thisStartISO.slice(0, 10);
+  const thisEndDate = thisEndISO.slice(0, 10);
   const prevStartDate = prevStartISO.slice(0, 10);
 
   // --- Data (parallel) ---
   const [thisRes, prevRes, customRes, convRes, progRes] = await Promise.all([
     supabase.from('daily_pacts')
       .select('date, wins_completed, total_wins, status, impact_message')
-      .eq('client_id', clientId).gte('date', thisStartDate).order('date', { ascending: true }),
+      .eq('client_id', clientId).gt('date', thisStartDate).lte('date', thisEndDate).order('date', { ascending: true }),
     supabase.from('daily_pacts')
       .select('wins_completed, total_wins')
-      .eq('client_id', clientId).gte('date', prevStartDate).lt('date', thisStartDate),
+      .eq('client_id', clientId).gt('date', prevStartDate).lte('date', thisStartDate),
     supabase.from('custom_pacts')
       .select('name, rule, current_streak, longest_streak, last_broken_date, status')
       .eq('client_id', clientId),
     supabase.from('conversations')
       .select('role, content, created_at')
-      .eq('client_id', clientId).gte('created_at', thisStartISO)
+      .eq('client_id', clientId).gt('created_at', thisStartISO).lte('created_at', thisEndISO)
       .order('created_at', { ascending: true }).limit(60),
     supabase.from('programs')
       .select('id, name, weeks, status').eq('client_id', clientId).eq('status', 'active').limit(1),
@@ -167,7 +170,7 @@ Return ONLY valid JSON — no preamble, no markdown fences — matching exactly:
   return NextResponse.json(
     {
       client: { id: client.id, name: client.name },
-      window: { days: 7, from: thisStartDate },
+      window: { days: 7, from: thisStartDate, to: thisEndDate, weeks_ago: weeksAgo },
       stats: {
         adherence_pct: adhThis.pct,
         prev_adherence_pct: adhPrev.pct,
@@ -185,14 +188,16 @@ Return ONLY valid JSON — no preamble, no markdown fences — matching exactly:
   );
 }
 
-export async function GET(_req, context) {
+export async function GET(req, context) {
   noStore();
   const params = await context.params;
-  return generate(params?.clientId);
+  const weeksAgo = Math.max(0, parseInt(new URL(req.url).searchParams.get('weeks_ago') || '0', 10) || 0);
+  return generate(params?.clientId, weeksAgo);
 }
 
-export async function POST(_req, context) {
+export async function POST(req, context) {
   noStore();
   const params = await context.params;
-  return generate(params?.clientId);
+  const weeksAgo = Math.max(0, parseInt(new URL(req.url).searchParams.get('weeks_ago') || '0', 10) || 0);
+  return generate(params?.clientId, weeksAgo);
 }
