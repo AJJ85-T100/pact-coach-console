@@ -10,6 +10,7 @@ export default function BriefsBoard({ clients, ptName }) {
   const [selectedId, setSelectedId] = useState(clients?.[0]?.id || null);
   const [briefs, setBriefs] = useState({}); // id -> { loading, error, data }
   const [notes, setNotes] = useState({});   // id -> { loading, list }
+  const [appts, setAppts] = useState({});   // id -> { loading, next, list }
   const [rosterWidth, setRosterWidth] = useState(330);
   const rosterWidthRef = useRef(330);
   const rosterElRef = useRef(null);
@@ -47,10 +48,35 @@ export default function BriefsBoard({ clients, ptName }) {
     }
   }
 
+  async function loadAppts(id) {
+    setAppts((a) => ({ ...a, [id]: { loading: true, next: a[id]?.next || null } }));
+    try {
+      const res = await fetch(`/api/appointments?clientId=${id}`, { cache: 'no-store' });
+      const j = await res.json();
+      setAppts((a) => ({ ...a, [id]: { next: j.next || null, list: j.appointments || [] } }));
+    } catch {
+      setAppts((a) => ({ ...a, [id]: { next: null, list: [] } }));
+    }
+  }
+
+  async function scheduleAppt(id, whenLocal) {
+    try {
+      await fetch('/api/appointments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientId: id, scheduledAt: whenLocal }),
+      });
+    } catch {
+      /* non-fatal */
+    }
+    loadAppts(id);
+  }
+
   function selectClient(id) {
     setSelectedId(id);
     if (!briefs[id] || briefs[id].error) loadBrief(id);
     if (!notes[id]) loadNotes(id);
+    if (!appts[id]) loadAppts(id);
   }
 
   async function saveNote(id, text) {
@@ -65,23 +91,6 @@ export default function BriefsBoard({ clients, ptName }) {
     }
     await loadNotes(id);
     loadBrief(id); // logging resets the "since" window to now
-  }
-
-  async function toggleDay(id, day) {
-    const client = roster.find((c) => c.id === id);
-    const current = Array.isArray(client?.session_days) ? client.session_days : [];
-    const next = current.includes(day) ? current.filter((d) => d !== day) : [...current, day];
-    const ordered = WEEKDAYS.filter((d) => next.includes(d));
-    setRoster((r) => r.map((c) => (c.id === id ? { ...c, session_days: ordered } : c)));
-    try {
-      await fetch('/api/client-schedule', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clientId: id, days: ordered }),
-      });
-    } catch {
-      /* optimistic; ignore */
-    }
   }
 
   useEffect(() => {
@@ -127,12 +136,12 @@ export default function BriefsBoard({ clients, ptName }) {
   const state = selectedId ? briefs[selectedId] : null;
   const noteState = selectedId ? notes[selectedId] : null;
 
-  // Group roster by weekday (a client can appear under more than one day).
+  // Group roster by workout weekday (from the active programme; a client can train more than one day).
   const scheduled = WEEKDAYS.map((day) => ({
     day,
-    clients: roster.filter((c) => Array.isArray(c.session_days) && c.session_days.includes(day)),
+    clients: roster.filter((c) => Array.isArray(c.workout_days) && c.workout_days.includes(day)),
   })).filter((g) => g.clients.length > 0);
-  const unscheduled = roster.filter((c) => !Array.isArray(c.session_days) || c.session_days.length === 0);
+  const unscheduled = roster.filter((c) => !Array.isArray(c.workout_days) || c.workout_days.length === 0);
 
   return (
     <div className="flex h-screen">
@@ -145,7 +154,7 @@ export default function BriefsBoard({ clients, ptName }) {
           Pre-session briefs
         </h1>
         <p className="font-['Inter'] text-[13px] text-[#4A4A4A] mb-6">
-          {roster.length} {roster.length === 1 ? 'athlete' : 'athletes'} · grouped by the days you train them.
+          {roster.length} {roster.length === 1 ? 'athlete' : 'athletes'} · grouped by their workout days.
         </p>
 
         {roster.length === 0 && (
@@ -180,7 +189,6 @@ export default function BriefsBoard({ clients, ptName }) {
             state={state}
             noteState={noteState}
             onSaveNote={(text) => saveNote(selected.id, text)}
-            onToggleDay={(d) => toggleDay(selected.id, d)}
             onRetry={() => loadBrief(selected.id)}
           />
         )}
@@ -233,13 +241,13 @@ function RosterCard({ client, selected, onSelect, highlight }) {
   );
 }
 
-function BriefPanel({ client, state, noteState, onSaveNote, onToggleDay, onRetry }) {
+function BriefPanel({ client, state, noteState, onSaveNote, onRetry }) {
   const initials = (client.name || '?').split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
   const data = state?.data;
   const brief = data?.brief;
   const since = data?.since;
   const stats = data?.stats;
-  const days = Array.isArray(client.session_days) ? client.session_days : [];
+  const days = Array.isArray(client.workout_days) ? client.workout_days : [];
 
   return (
     <div className="max-w-2xl">
@@ -258,28 +266,38 @@ function BriefPanel({ client, state, noteState, onSaveNote, onToggleDay, onRetry
         </div>
       </div>
 
-      {/* Session days */}
+      <AppointmentBlock clientId={client.id} workoutDays={days} />
+
+      {/* Workout days (from active programme) */}
       <div className="bg-white border border-[#E2E6EB] rounded-[8px] p-4 mb-4">
-        <div className="font-['Inter'] text-[10px] font-bold uppercase tracking-[0.14em] text-[#8A95A3] mb-2">Session days</div>
-        <div className="flex flex-wrap gap-1.5">
-          {WEEKDAYS.map((d) => {
-            const on = days.includes(d);
-            const isToday = d === TODAY;
-            return (
-              <button
-                key={d}
-                onClick={() => onToggleDay(d)}
-                className={`font-['Inter'] text-[12px] font-semibold px-3 py-1.5 rounded-[6px] border transition-colors ${
-                  on
-                    ? 'bg-[#0A2540] text-white border-[#0A2540]'
-                    : `bg-white text-[#8A95A3] border-[#E2E6EB] hover:border-[#0A2540] ${isToday ? 'ring-1 ring-[#D92D20]/30' : ''}`
-                }`}
-              >
-                {d}
-              </button>
-            );
-          })}
+        <div className="flex items-center justify-between mb-2">
+          <span className="font-['Inter'] text-[10px] font-bold uppercase tracking-[0.14em] text-[#8A95A3]">Workout days</span>
+          <span className="font-['Inter'] text-[10px] text-[#8A95A3]">from active programme</span>
         </div>
+        {days.length === 0 ? (
+          <p className="font-['Inter'] text-[12px] text-[#8A95A3] italic">
+            No scheduled sessions — add days in the programme builder and they’ll show here.
+          </p>
+        ) : (
+          <div className="flex flex-wrap gap-1.5">
+            {WEEKDAYS.map((d) => {
+              const on = days.includes(d);
+              const isToday = d === TODAY;
+              return (
+                <span
+                  key={d}
+                  className={`font-['Inter'] text-[12px] font-semibold px-3 py-1.5 rounded-[6px] border ${
+                    on
+                      ? `bg-[#0A2540] text-white border-[#0A2540] ${isToday ? 'ring-2 ring-[#D92D20] ring-offset-1' : ''}`
+                      : 'bg-white text-[#C2C9D2] border-[#E2E6EB]'
+                  }`}
+                >
+                  {d}
+                </span>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Stat tiles */}
@@ -306,13 +324,13 @@ function BriefPanel({ client, state, noteState, onSaveNote, onToggleDay, onRetry
 
       {state?.loading && (
         <div className="bg-white border border-[#E2E6EB] rounded-[8px] p-6 text-center">
-          <p className="font-['Inter'] text-[13px] text-[#8A95A3]">PAX is reading the last few weeks\u2026</p>
+          <p className="font-['Inter'] text-[13px] text-[#8A95A3]">PAX is reading the last few weeks…</p>
         </div>
       )}
 
       {state?.error && (
         <div className="bg-white border-l-[3px] border-[#D92D20] rounded-[4px] p-4">
-          <p className="font-['Inter'] text-sm text-[#0A2540]"><span className="font-bold">Couldn\u2019t generate:</span> {state.error}</p>
+          <p className="font-['Inter'] text-sm text-[#0A2540]"><span className="font-bold">Couldn’t generate:</span> {state.error}</p>
           <button onClick={onRetry} className="mt-2 font-['Inter'] font-semibold text-[12px] text-[#D92D20] uppercase tracking-[0.05em]">Try again</button>
         </div>
       )}
@@ -387,28 +405,85 @@ function BriefPanel({ client, state, noteState, onSaveNote, onToggleDay, onRetry
 function NoteComposer({ onSave }) {
   const [text, setText] = useState('');
   const [saving, setSaving] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [supported, setSupported] = useState(false);
+  const recRef = useRef(null);
+  const baseRef = useRef('');
+
+  useEffect(() => {
+    setSupported(typeof window !== 'undefined' && !!(window.SpeechRecognition || window.webkitSpeechRecognition));
+  }, []);
+
+  function startRec(e) {
+    e.preventDefault();
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return;
+    const rec = new SR();
+    rec.lang = 'en-GB';
+    rec.continuous = true;
+    rec.interimResults = true;
+    baseRef.current = text ? `${text.trim()} ` : '';
+    rec.onresult = (ev) => {
+      let s = '';
+      for (let i = 0; i < ev.results.length; i++) s += ev.results[i][0].transcript;
+      setText(baseRef.current + s);
+    };
+    rec.onend = () => setRecording(false);
+    rec.onerror = () => setRecording(false);
+    recRef.current = rec;
+    try {
+      rec.start();
+      setRecording(true);
+    } catch {}
+  }
+
+  function stopRec() {
+    try {
+      recRef.current && recRef.current.stop();
+    } catch {}
+    setRecording(false);
+  }
+
   async function save() {
+    if (recording) stopRec();
     setSaving(true);
     await onSave(text.trim());
     setText('');
     setSaving(false);
   }
+
   return (
     <div className="mb-3">
       <textarea
         value={text}
         onChange={(e) => setText(e.target.value)}
         rows={2}
-        placeholder="What happened in today\u2019s session? (your own recap \u2014 saved against today)"
+        placeholder="What happened in today’s session? Type, or hold the mic to dictate."
         className="w-full font-['Inter'] text-[13px] text-[#0A2540] bg-[#F4F6F8] border border-[#E2E6EB] rounded-[6px] p-3 resize-y focus:outline-none focus:border-[#D92D20]"
       />
-      <div className="flex justify-end mt-2">
+      <div className="flex items-center justify-between mt-2 gap-2">
+        {supported ? (
+          <button
+            onPointerDown={startRec}
+            onPointerUp={stopRec}
+            onPointerLeave={stopRec}
+            className={`flex items-center gap-2 font-['Inter'] font-semibold text-[11px] uppercase tracking-[0.06em] px-3 py-2 rounded-[6px] border transition-colors select-none ${
+              recording ? 'bg-[#D92D20] text-white border-[#D92D20]' : 'bg-white text-[#0A2540] border-[#E2E6EB] hover:border-[#0A2540]'
+            }`}
+            title="Press and hold to dictate"
+          >
+            <span className={`w-2 h-2 rounded-full ${recording ? 'bg-white animate-pulse' : 'bg-[#D92D20]'}`} />
+            {recording ? 'Listening… release to stop' : 'Hold to record'}
+          </button>
+        ) : (
+          <span className="font-['Inter'] text-[10px] text-[#8A95A3]">Voice dictation needs Chrome or Edge.</span>
+        )}
         <button
           onClick={save}
           disabled={saving}
           className="bg-[#D92D20] hover:bg-[#B0241A] disabled:opacity-60 text-white font-['Inter'] font-semibold text-[11px] uppercase tracking-[0.06em] px-4 py-2 rounded-[6px] transition-colors"
         >
-          {saving ? 'Saving\u2026' : '\u2713 Log session + note'}
+          {saving ? 'Saving…' : '✓ Log session + note'}
         </button>
       </div>
     </div>
@@ -419,10 +494,10 @@ function NoteHistory({ noteState }) {
   const list = noteState?.list || [];
   const withNotes = list.filter((m) => m.note && m.note.trim());
   if (noteState?.loading && list.length === 0) {
-    return <p className="font-['Inter'] text-[12px] text-[#8A95A3]">Loading notes\u2026</p>;
+    return <p className="font-['Inter'] text-[12px] text-[#8A95A3]">Loading notes…</p>;
   }
   if (withNotes.length === 0) {
-    return <p className="font-['Inter'] text-[12px] text-[#8A95A3] italic">No notes logged yet \u2014 your recap from each session shows here.</p>;
+    return <p className="font-['Inter'] text-[12px] text-[#8A95A3] italic">No notes logged yet — your recap from each session shows here.</p>;
   }
   return (
     <div className="border-t border-[#E2E6EB] pt-3 space-y-2.5">
@@ -475,4 +550,140 @@ function fmtDate(iso) {
   } catch {
     return '';
   }
+}
+
+function AppointmentBlock({ clientId, workoutDays }) {
+  const [list, setList] = useState(null);
+  const [when, setWhen] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function load() {
+    try {
+      const r = await fetch(`/api/appointments?clientId=${clientId}`, { cache: 'no-store' });
+      const j = await r.json();
+      setList(j.appointments || []);
+    } catch {
+      setList([]);
+    }
+  }
+
+  useEffect(() => {
+    load();
+    setWhen(defaultWhen(workoutDays));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientId]);
+
+  async function schedule() {
+    if (!when) return;
+    setBusy(true);
+    try {
+      await fetch('/api/appointments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientId, scheduledAt: new Date(when).toISOString() }),
+      });
+      await load();
+    } catch {}
+    setBusy(false);
+  }
+
+  async function cancel(id) {
+    try {
+      await fetch(`/api/appointments?id=${id}`, { method: 'DELETE' });
+      await load();
+    } catch {}
+  }
+
+  const next = list && list[0];
+
+  return (
+    <div className="bg-white border border-[#E2E6EB] rounded-[8px] p-4 mb-4">
+      <div className="font-['Inter'] text-[10px] font-bold uppercase tracking-[0.14em] text-[#8A95A3] mb-2">Next appointment</div>
+
+      {list === null ? (
+        <p className="font-['Inter'] text-[12px] text-[#8A95A3]">Loading…</p>
+      ) : next ? (
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <div>
+            <div className="font-['Montserrat'] font-bold text-[15px] text-[#0A2540]">{fmtAppt(next.scheduled_at)}</div>
+            <div className="font-['Inter'] text-[11px] text-[#8A95A3]">{relDays(next.scheduled_at)}</div>
+          </div>
+          <button onClick={() => cancel(next.id)} className="font-['Inter'] text-[11px] font-semibold text-[#8A95A3] hover:text-[#D92D20] uppercase tracking-[0.05em]">Cancel</button>
+        </div>
+      ) : (
+        <p className="font-['Inter'] text-[12px] text-[#8A95A3] italic mb-3">No upcoming session scheduled.</p>
+      )}
+
+      <div className="flex items-center gap-2 border-t border-[#E2E6EB] pt-3">
+        <input
+          type="datetime-local"
+          value={when}
+          onChange={(e) => setWhen(e.target.value)}
+          className="flex-1 font-['Inter'] text-[12px] text-[#0A2540] bg-[#F4F6F8] border border-[#E2E6EB] rounded-[6px] px-2.5 py-2 focus:outline-none focus:border-[#D92D20]"
+        />
+        <button
+          onClick={schedule}
+          disabled={busy || !when}
+          className="bg-[#0A2540] hover:bg-[#0F3155] disabled:opacity-50 text-white font-['Inter'] font-semibold text-[11px] uppercase tracking-[0.06em] px-3.5 py-2 rounded-[6px] transition-colors whitespace-nowrap"
+        >
+          {busy ? 'Saving…' : 'Schedule'}
+        </button>
+      </div>
+
+      {list && list.length > 1 && (
+        <div className="mt-3 space-y-1.5">
+          {list.slice(1).map((a) => (
+            <div key={a.id} className="flex items-center justify-between font-['Inter'] text-[12px] text-[#4A4A4A]">
+              <span>{fmtAppt(a.scheduled_at)}</span>
+              <button onClick={() => cancel(a.id)} className="text-[#8A95A3] hover:text-[#D92D20] text-[11px] uppercase tracking-[0.05em]">Cancel</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const WD_JS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function defaultWhen(workoutDays) {
+  const now = new Date();
+  let target = null;
+  if (Array.isArray(workoutDays) && workoutDays.length) {
+    for (let i = 1; i <= 7; i++) {
+      const d = new Date(now);
+      d.setDate(now.getDate() + i);
+      d.setHours(9, 0, 0, 0);
+      if (workoutDays.includes(WD_JS[d.getDay()])) {
+        target = d;
+        break;
+      }
+    }
+  }
+  if (!target) {
+    target = new Date(now);
+    target.setDate(now.getDate() + 1);
+    target.setHours(9, 0, 0, 0);
+  }
+  return toLocalInput(target);
+}
+
+function toLocalInput(d) {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function fmtAppt(iso) {
+  try {
+    return new Date(iso).toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  } catch {
+    return iso;
+  }
+}
+
+function relDays(iso) {
+  const days = Math.round((new Date(iso).getTime() - Date.now()) / 86400000);
+  if (days <= 0) return 'today';
+  if (days === 1) return 'tomorrow';
+  return `in ${days} days`;
 }
