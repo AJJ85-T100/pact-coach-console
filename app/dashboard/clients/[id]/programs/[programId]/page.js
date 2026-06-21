@@ -24,6 +24,11 @@ import { createContext, useContext, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 
+// Weekday labels for session day_index (1 = Mon … 7 = Sun)
+const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const dayName = (n) => DAY_NAMES[n - 1] || `Day ${n}`;
+
+
 // ============================================================================
 // Exercise picker context + equipment matching
 // ============================================================================
@@ -641,7 +646,9 @@ function WeekGroup({ weekNumber, sessions, onChange }) {
   // Resync to server order whenever the parent refetches.
   useEffect(() => { setOrder(sessions); }, [sessions]);
 
-  const canReorder = order.length > 1;
+  // day_index now represents a weekday (set via the Day dropdown), so
+  // sequential drag-reorder would corrupt it. Sessions render in weekday order.
+  const canReorder = false;
 
   function reset() {
     setDragIndex(null);
@@ -883,7 +890,7 @@ function SessionHeader({ session, exerciseCount, onEdit, onChange }) {
     <div className="bg-[#0A2540] text-white px-5 py-3 flex items-center justify-between flex-wrap gap-3">
       <div className="flex items-center gap-3 min-w-0">
         <span className="font-['Montserrat'] font-bold text-[10px] uppercase tracking-[2px] text-white/60 px-2 py-1 bg-white/10 rounded-[3px] flex-shrink-0">
-          W{session.week_number} · D{session.day_index}
+          W{session.week_number} · {dayName(session.day_index)}
         </span>
         <h3 className="font-['Montserrat'] font-bold text-[15px] uppercase tracking-[0.3px] truncate">
           {session.name}
@@ -990,13 +997,16 @@ function SessionForm({ mode, programId, session, defaultWeek, onCancel, onDone }
           />
         </FormField>
         <FormField label="Day" required>
-          <input
-            type="number" min="1" max="7"
+          <select
             value={dayIndex}
             onChange={(e) => setDayIndex(parseInt(e.target.value, 10) || 1)}
             required
             className="w-full bg-[#F4F6F8] border border-[#E2E6EB] rounded-[4px] px-3 py-2 text-sm text-[#0A2540] font-['Inter'] focus:outline-none focus:border-[#0A2540] transition-colors"
-          />
+          >
+            {DAY_NAMES.map((d, i) => (
+              <option key={d} value={i + 1}>{d}</option>
+            ))}
+          </select>
         </FormField>
         <div className="col-span-2">
           <FormField label="Name" required>
