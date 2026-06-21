@@ -34,19 +34,47 @@ function timeAgo(iso) {
   return new Date(iso).toLocaleDateString('en-GB');
 }
 
-// Humanise milestone keys → "Squat PR" etc
-function humaniseMilestoneKey(key) {
-  if (!key) return 'Milestone';
-  return key
-    .replace(/_/g, ' ')
-    .replace(/\bpr\b/gi, 'PR')
-    .replace(/\b\w/g, c => c.toUpperCase());
+// Parse a raw bot milestone key (e.g. "steps_5000_2026-06-21",
+// "bad_week_2026-06-21", "squat_pr_2026-06-20") into a human predicate
+// + a type used for the activity icon. The trailing ISO date is stripped
+// because the timestamp already carries it.
+function parseBotEvent(key) {
+  if (!key) return { text: 'logged a milestone', type: 'generic' };
+  const k = String(key).replace(/[\s_-]?\d{4}-\d{2}-\d{2}\s*$/, '').trim();
+  const low = k.toLowerCase();
+
+  const steps = low.match(/steps?[\s_-]?(\d{3,6})/);
+  if (steps) return { text: `hit ${Number(steps[1]).toLocaleString('en-GB')} steps`, type: 'steps' };
+
+  if (/bad[\s_-]?week/.test(low)) return { text: 'flagged a tough week', type: 'badweek' };
+
+  if (/streak/.test(low)) {
+    const n = (low.match(/(\d+)/) || [])[1];
+    return { text: n ? `reached a ${n}-day streak` : 'extended a streak', type: 'streak' };
+  }
+
+  if (/\bpr\b|_pr|pr_|personal[\s_-]?record/.test(low)) {
+    const lift = k.replace(/[_-]/g, ' ').replace(/\bpr\b/gi, '').replace(/personal record/gi, '').trim();
+    return { text: lift ? `hit a ${lift} PR` : 'hit a new PR', type: 'pr' };
+  }
+
+  const human = k.replace(/[_-]/g, ' ').trim().replace(/\b\w/g, c => c.toUpperCase());
+  return { text: human || 'logged a milestone', type: 'generic' };
 }
 
-// Humanise slip event_type
 function humaniseSlipType(type) {
-  if (!type) return 'Slip';
+  if (!type) return 'a slip';
   return type.replace(/_/g, ' ');
+}
+
+// Day bucket label for grouping the activity feed.
+function dayBucketLabel(when) {
+  const d = dateStrISO(new Date(when));
+  const now = new Date();
+  const yest = new Date(now); yest.setDate(now.getDate() - 1);
+  if (d === dateStrISO(now))  return 'Today';
+  if (d === dateStrISO(yest)) return 'Yesterday';
+  return new Date(when).toLocaleDateString('en-GB', { weekday: 'long' });
 }
 
 // ============================================================
@@ -64,7 +92,7 @@ export default async function MyDayPage() {
     .eq('auth_user_id', user.id)
     .maybeSingle();
 
-// Clients — skip the query entirely if no PT row, and always default to []
+  // Clients — skip the query entirely if no PT row, and always default to []
   // (Supabase returns data: null on error, which default destructuring doesn't catch).
   let clients = [];
   if (pt?.id) {
@@ -87,6 +115,12 @@ export default async function MyDayPage() {
   monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
   const mondayStr = dateStrISO(monday);
 
+  // 7-day window of ISO date strings, oldest → newest (for sparklines)
+  const days7 = [...Array(7)].map((_, i) => {
+    const d = new Date(today); d.setDate(today.getDate() - (6 - i));
+    return dateStrISO(d);
+  });
+
   // ============================================================
   // Aggregate queries (skipped if no clients to avoid empty IN)
   // ============================================================
@@ -100,19 +134,16 @@ export default async function MyDayPage() {
       pactsR, programmeR, winsR, milestonesR,
       slipsR, msgsR, weeklyR,
     ] = await Promise.all([
-      // Daily pacts last 7 days for adherence
       service.from('daily_pacts')
         .select('client_id, date, status')
         .in('client_id', clientIds)
         .gte('date', dateStrISO(sevenAgo)),
 
-      // Programme entries scheduled today
       service.from('programme')
         .select('client_id, date, completed')
         .in('client_id', clientIds)
         .eq('date', todayStr),
 
-      // Wins this week from win_stack
       service.from('win_stack')
         .select('client_id, date, pact_type, description, weight, created_at')
         .in('client_id', clientIds)
@@ -120,14 +151,12 @@ export default async function MyDayPage() {
         .order('date', { ascending: false })
         .limit(20),
 
-      // Recent milestones for activity feed
       service.from('milestones')
         .select('client_id, key, created_at')
         .in('client_id', clientIds)
         .order('created_at', { ascending: false })
-        .limit(20),
+        .limit(30),
 
-      // Recent slip events for activity feed
       service.from('slip_events')
         .select('client_id, event_type, detected_at')
         .in('client_id', clientIds)
@@ -135,7 +164,6 @@ export default async function MyDayPage() {
         .order('detected_at', { ascending: false })
         .limit(20),
 
-      // Recent user messages for activity feed (1 per athlete to avoid spam)
       service.from('conversations')
         .select('client_id, role, content, created_at')
         .in('client_id', clientIds)
@@ -144,7 +172,6 @@ export default async function MyDayPage() {
         .order('created_at', { ascending: false })
         .limit(20),
 
-      // Weekly pacts created this week (proxy for "reports drafted")
       service.from('weekly_pacts')
         .select('client_id, week_start, status, pact_score')
         .in('client_id', clientIds)
@@ -166,8 +193,9 @@ export default async function MyDayPage() {
   const total       = clients.length;
   const atRiskCount = clients.filter(c => c.status === 'at_risk').length;
 
-  // Per-client adherence map (for roster pulse)
+  // Per-client adherence (for roster pulse %) + 7-day series (for sparkline)
   const adherenceByClient = {};
+  const seriesByClient = {};
   for (const id of clientIds) {
     const cp = pacts7d.filter(p => p.client_id === id);
     if (cp.length === 0) {
@@ -176,6 +204,14 @@ export default async function MyDayPage() {
       const won = cp.filter(p => p.status === 'won').length;
       adherenceByClient[id] = Math.round((won / cp.length) * 100);
     }
+    const byDate = Object.fromEntries(cp.map(p => [p.date, p.status]));
+    seriesByClient[id] = days7.map(ds => {
+      const s = byDate[ds];
+      if (s === undefined) return null;
+      if (s === 'won') return 1;
+      if (s === 'partial') return 0.5;
+      return 0;
+    });
   }
 
   // Active this week: clients with any pact entry in last 7d
@@ -185,32 +221,40 @@ export default async function MyDayPage() {
   const sessionsToday    = todayProgramme.length;
   const sessionsComplete = todayProgramme.filter(p => p.completed).length;
 
-  // Reports drafted: weekly_pacts with this week_start that have a score
+  // Reports drafted: weekly_pacts with this week_start
   const reportsDrafted = weeklyPactsThisWeek.length;
 
-  // Build unified activity feed (last ~24h)
-  const activity = [
-    ...milestones.map(m => ({
-      kind: 'milestone',
-      when: m.created_at,
-      clientId: m.client_id,
-      content: humaniseMilestoneKey(m.key),
-    })),
-    ...slips24h.map(s => ({
-      kind: 'slip',
-      when: s.detected_at,
-      clientId: s.client_id,
-      content: `Slip · ${humaniseSlipType(s.event_type)}`,
-    })),
-    ...recentMessages.map(m => ({
-      kind: 'message',
-      when: m.created_at,
-      clientId: m.client_id,
-      content: m.content?.slice(0, 80) + (m.content?.length > 80 ? '…' : ''),
-    })),
-  ]
-    .sort((a, b) => new Date(b.when) - new Date(a.when))
-    .slice(0, 12);
+  // ----- Unified activity feed --------------------------------
+  const milestoneEvents = milestones.map(m => {
+    const p = parseBotEvent(m.key);
+    return { kind: p.type, when: m.created_at, clientId: m.client_id, text: p.text };
+  });
+  const slipEvents = slips24h.map(s => ({
+    kind: 'slip', when: s.detected_at, clientId: s.client_id,
+    text: `flagged ${humaniseSlipType(s.event_type)}`,
+  }));
+  const messageEvents = recentMessages.map(m => {
+    const body = (m.content || '').trim();
+    const snip = body.slice(0, 72) + (body.length > 72 ? '…' : '');
+    return { kind: 'message', when: m.created_at, clientId: m.client_id, text: `messaged: “${snip}”` };
+  });
+
+  // Merge, dedupe identical lines, cap routine step-logs so they don't flood.
+  const merged = [...milestoneEvents, ...slipEvents, ...messageEvents]
+    .filter(e => e.when)
+    .sort((a, b) => new Date(b.when) - new Date(a.when));
+
+  const seen = new Set();
+  let stepCount = 0;
+  const activity = [];
+  for (const e of merged) {
+    const sig = `${e.clientId}|${e.text}`;
+    if (seen.has(sig)) continue;
+    if (e.kind === 'steps') { if (stepCount >= 4) continue; stepCount++; }
+    seen.add(sig);
+    activity.push(e);
+    if (activity.length >= 16) break;
+  }
 
   // Greeting copy
   const firstName = pt?.name?.split(' ')[0] || 'Coach';
@@ -226,7 +270,7 @@ export default async function MyDayPage() {
   // Smart subtitle
   let heroSubtitle;
   if (total === 0) {
-    heroSubtitle = "No clients yet. Invite your first athlete to get started.";
+    heroSubtitle = 'No clients yet. Invite your first athlete to get started.';
   } else if (sessionsToday > 0) {
     heroSubtitle = `${sessionsToday} session${sessionsToday === 1 ? '' : 's'} scheduled today.${atRiskCount > 0 ? ` ${atRiskCount} client${atRiskCount === 1 ? '' : 's'} need${atRiskCount === 1 ? 's' : ''} attention.` : ''}`;
   } else if (atRiskCount > 0) {
@@ -251,17 +295,23 @@ export default async function MyDayPage() {
         </p>
       </section>
 
+      {/* QUICK ACTIONS — launch bar (Salesforce/Workday style) */}
+      <div className="px-8 lg:px-10 pt-6">
+        <QuickActions />
+      </div>
+
       <div className="px-8 lg:px-10 py-8 grid grid-cols-1 lg:grid-cols-3 gap-6">
 
         {/* MAIN COLUMN (2/3) */}
         <div className="lg:col-span-2 space-y-6">
 
-          {/* Status tiles */}
+          {/* Status tiles — now clickable jump-offs */}
           <section className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             <StatusTile
               label="Sessions today"
               value={sessionsToday}
               sub={sessionsToday > 0 ? `${sessionsComplete} done` : 'None scheduled'}
+              href="/dashboard/briefs"
             />
             <StatusTile
               label="Form reviews"
@@ -273,16 +323,18 @@ export default async function MyDayPage() {
               label="Reports drafted"
               value={reportsDrafted}
               sub={reportsDrafted > 0 ? `for week of ${monday.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}` : 'Build the week ahead'}
+              href="/dashboard/reports"
             />
             <StatusTile
               label="At risk"
               value={atRiskCount}
               accent={atRiskCount > 0}
               sub={atRiskCount > 0 ? 'Action required' : 'All clear'}
+              href="/dashboard/athletes"
             />
           </section>
 
-          {/* Next session — placeholder until we have real scheduling */}
+          {/* Next session */}
           {sessionsToday > 0 ? (
             <NextSessionCard programme={todayProgramme} clientById={clientById} />
           ) : (
@@ -294,12 +346,13 @@ export default async function MyDayPage() {
             <RosterPulse
               clients={clients}
               adherenceByClient={adherenceByClient}
+              seriesByClient={seriesByClient}
               activeThisWeek={activeThisWeek}
             />
             <ThisWeekWins wins={wins} clientById={clientById} />
           </div>
 
-          {/* Today's queue — visual placeholder actions */}
+          {/* Today's queue */}
           <TodaysQueue
             atRiskCount={atRiskCount}
             sessionsToday={sessionsToday}
@@ -321,26 +374,64 @@ export default async function MyDayPage() {
 // ============================================================
 // Components
 // ============================================================
-function StatusTile({ label, value, sub, accent, muted }) {
+function QuickActions() {
+  const actions = [
+    { href: '/dashboard/briefs',   label: "Today's briefs" },
+    { href: '/dashboard/reports',  label: 'PAX reports' },
+    { href: '/dashboard/athletes', label: 'All athletes' },
+    { href: '/dashboard/programs', label: 'Build a program' },
+    { href: '/dashboard/invite',   label: 'Invite client' },
+  ];
   return (
-    <div className={`bg-white rounded-lg shadow-card p-5 border ${
-      accent ? 'border-red' : muted ? 'border-border opacity-60' : 'border-border'
-    }`}>
-      <div className="text-[10px] font-semibold tracking-[0.2em] uppercase text-muted mb-2">
-        {label}
-      </div>
-      <div className={`font-display font-extrabold text-3xl leading-none mb-1 ${
-        accent ? 'text-red' : 'text-blue'
-      }`}>
-        {value}
-      </div>
-      {sub && <div className="text-[11px] text-muted">{sub}</div>}
-    </div>
+    <section className="flex flex-wrap gap-2">
+      {actions.map(a => (
+        <Link
+          key={a.href}
+          href={a.href}
+          className="group inline-flex items-center gap-2.5 bg-white border border-border rounded-lg px-4 py-2.5 shadow-card hover:border-blue transition-colors"
+        >
+          <span className="w-1.5 h-1.5 rounded-full bg-red flex-shrink-0" />
+          <span className="text-[12px] font-semibold uppercase tracking-wider text-blue">{a.label}</span>
+          <span className="text-red text-sm leading-none opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all">→</span>
+        </Link>
+      ))}
+    </section>
   );
 }
 
+function StatusTile({ label, value, sub, accent, muted, href }) {
+  const inner = (
+    <>
+      <div className="flex items-start justify-between">
+        <div className="text-[10px] font-semibold tracking-[0.2em] uppercase text-muted mb-2">
+          {label}
+        </div>
+        {href && (
+          <span className="text-red text-sm leading-none opacity-0 group-hover:opacity-100 transition-opacity">→</span>
+        )}
+      </div>
+      <div className={`font-display font-extrabold text-3xl leading-none mb-1 ${accent ? 'text-red' : 'text-blue'}`}>
+        {value}
+      </div>
+      {sub && <div className="text-[11px] text-muted">{sub}</div>}
+    </>
+  );
+
+  const base = `bg-white rounded-lg shadow-card p-5 border ${
+    accent ? 'border-red' : muted ? 'border-border opacity-60' : 'border-border'
+  }`;
+
+  if (href && !muted) {
+    return (
+      <Link href={href} className={`group block ${base} hover:border-blue transition-colors`}>
+        {inner}
+      </Link>
+    );
+  }
+  return <div className={base}>{inner}</div>;
+}
+
 function NextSessionCard({ programme, clientById }) {
-  // Show first programme entry as the "next session"
   const next = programme[0];
   const client = clientById[next?.client_id];
 
@@ -389,7 +480,31 @@ function NoSessionsPlaceholder() {
   );
 }
 
-function RosterPulse({ clients, adherenceByClient, activeThisWeek }) {
+// Compact inline sparkline from a 7-slot series of {0, 0.5, 1, null}.
+function Sparkline({ series, stroke }) {
+  const pts = series
+    .map((v, i) => ({ v, i }))
+    .filter(p => p.v != null);
+  if (pts.length < 2) return null;
+
+  const W = 52, H = 16, span = (series.length - 1) || 1;
+  const xy = (p) => {
+    const x = (p.i / span) * W;
+    const y = H - 1 - p.v * (H - 2);
+    return { x, y };
+  };
+  const coords = pts.map(p => { const { x, y } = xy(p); return `${x.toFixed(1)},${y.toFixed(1)}`; }).join(' ');
+  const last = xy(pts[pts.length - 1]);
+
+  return (
+    <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} className="mt-1.5 mx-auto block" aria-hidden="true">
+      <polyline points={coords} fill="none" stroke={stroke} strokeWidth="1.4" strokeLinejoin="round" strokeLinecap="round" />
+      <circle cx={last.x} cy={last.y} r="1.7" fill={stroke} />
+    </svg>
+  );
+}
+
+function RosterPulse({ clients, adherenceByClient, seriesByClient, activeThisWeek }) {
   return (
     <div className="bg-white rounded-lg shadow-card border border-border p-5">
       <div className="flex items-center justify-between mb-4">
@@ -406,6 +521,7 @@ function RosterPulse({ clients, adherenceByClient, activeThisWeek }) {
         <div className="grid grid-cols-3 gap-2">
           {clients.map(c => {
             const adh = adherenceByClient[c.id];
+            const stroke = adh == null ? '#8A95A3' : adh >= 80 ? '#0F8A5F' : adh >= 50 ? '#D97706' : '#D92D20';
             const accent = adh == null
               ? 'border-border bg-bg text-muted'
               : adh >= 80
@@ -423,6 +539,7 @@ function RosterPulse({ clients, adherenceByClient, activeThisWeek }) {
                 <div className="font-display font-extrabold text-sm leading-none mt-1.5 tabular-nums">
                   {adh != null ? `${adh}%` : '—'}
                 </div>
+                <Sparkline series={seriesByClient[c.id] || []} stroke={stroke} />
               </Link>
             );
           })}
@@ -476,7 +593,7 @@ function TodaysQueue({ atRiskCount, sessionsToday }) {
         </h3>
       </div>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
-        <QueueButton label="Pre-session briefs" count={sessionsToday} disabled={sessionsToday === 0} />
+        <QueueButton label="Pre-session briefs" count={sessionsToday} href="/dashboard/briefs" />
         <QueueButton label="Form videos"        count={0} disabled />
         <QueueButton label="Client messages"    count={0} disabled />
         <QueueButton label="At-risk follow-up"  count={atRiskCount} accent={atRiskCount > 0} disabled />
@@ -485,24 +602,36 @@ function TodaysQueue({ atRiskCount, sessionsToday }) {
   );
 }
 
-function QueueButton({ label, count, accent, disabled }) {
-  return (
-    <div
-      className={`border rounded px-3 py-3 text-left ${
-        disabled
-          ? 'bg-bg border-border text-muted'
-          : accent
-            ? 'bg-white border-red text-red'
-            : 'bg-white border-border text-blue hover:border-blue cursor-pointer'
-      }`}
-    >
+function QueueButton({ label, count, accent, disabled, href }) {
+  const body = (
+    <>
       <div className="text-[9px] font-bold tracking-[0.15em] uppercase">{label}</div>
       <div className="font-display font-extrabold text-xl leading-none mt-2 tabular-nums">{count}</div>
-    </div>
+    </>
   );
+  const cls = `border rounded px-3 py-3 text-left block ${
+    disabled
+      ? 'bg-bg border-border text-muted'
+      : accent
+        ? 'bg-white border-red text-red'
+        : 'bg-white border-border text-blue hover:border-blue transition-colors'
+  }`;
+  if (href && !disabled) {
+    return <Link href={href} className={cls}>{body}</Link>;
+  }
+  return <div className={cls}>{body}</div>;
 }
 
 function ActivityFeed({ events, clientById }) {
+  // Group consecutive events under day headers (Today / Yesterday / weekday).
+  const groups = [];
+  for (const e of events) {
+    const label = dayBucketLabel(e.when);
+    let g = groups[groups.length - 1];
+    if (!g || g.label !== label) { g = { label, items: [] }; groups.push(g); }
+    g.items.push(e);
+  }
+
   return (
     <div className="bg-white rounded-lg shadow-card border border-border" style={{ maxHeight: 'calc(100vh - 3rem)' }}>
       <div className="px-5 py-4 border-b border-border">
@@ -518,26 +647,34 @@ function ActivityFeed({ events, clientById }) {
           Nothing in the last 24 hours. Quiet day.
         </div>
       ) : (
-        <ul className="divide-y divide-border overflow-y-auto scroll-thin">
-          {events.map((e, i) => {
-            const c = clientById[e.clientId];
-            return (
-              <li key={i} className="px-5 py-3 flex items-start gap-3">
-                <ActivityIcon kind={e.kind} />
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm text-blue leading-snug">
-                    <span className="font-semibold">{c?.name?.split(' ')[0] || 'Athlete'}</span>
-                    {' · '}
-                    <span className="text-body">{e.content}</span>
-                  </div>
-                  <div className="text-[10px] text-muted tracking-wide uppercase mt-0.5">
-                    {timeAgo(e.when)}
-                  </div>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
+        <div className="overflow-y-auto scroll-thin">
+          {groups.map((g, gi) => (
+            <div key={gi}>
+              <div className="px-5 pt-4 pb-2 text-[10px] font-bold tracking-[0.18em] uppercase text-muted bg-bg/40">
+                {g.label}
+              </div>
+              <ul className="divide-y divide-border">
+                {g.items.map((e, i) => {
+                  const c = clientById[e.clientId];
+                  return (
+                    <li key={i} className="px-5 py-3 flex items-start gap-3">
+                      <ActivityIcon kind={e.kind} />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm text-blue leading-snug">
+                          <span className="font-semibold">{c?.name?.split(' ')[0] || 'Athlete'}</span>{' '}
+                          <span className="text-body">{e.text}</span>
+                        </div>
+                        <div className="text-[10px] text-muted tracking-wide uppercase mt-0.5">
+                          {timeAgo(e.when)}
+                        </div>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );
@@ -545,11 +682,15 @@ function ActivityFeed({ events, clientById }) {
 
 function ActivityIcon({ kind }) {
   const map = {
-    milestone: { bg: 'bg-red',         char: '★', tx: 'text-white' },
-    slip:      { bg: 'bg-warn',        char: '!', tx: 'text-white' },
-    message:   { bg: 'bg-blue',        char: '◌', tx: 'text-white' },
+    pr:       { bg: 'bg-red',         char: '★', tx: 'text-white' },
+    steps:    { bg: 'bg-emerald-500', char: '↑', tx: 'text-white' },
+    streak:   { bg: 'bg-red',         char: '◆', tx: 'text-white' },
+    badweek:  { bg: 'bg-warn',        char: '!', tx: 'text-white' },
+    slip:     { bg: 'bg-warn',        char: '!', tx: 'text-white' },
+    message:  { bg: 'bg-blue',        char: '“', tx: 'text-white' },
+    generic:  { bg: 'bg-blue',        char: '•', tx: 'text-white' },
   };
-  const m = map[kind] || map.message;
+  const m = map[kind] || map.generic;
   return (
     <span className={`w-7 h-7 rounded grid place-items-center flex-shrink-0 text-xs font-bold ${m.bg} ${m.tx}`}>
       {m.char}
