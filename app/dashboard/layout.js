@@ -73,7 +73,7 @@ export default async function DashboardLayout({ children }) {
             </div>
             <SidebarNavItem href="/dashboard/briefs" label="Pre-session briefs" />
             <SidebarNavItem label="At-risk clients" count={atRiskCount} badge={atRiskCount > 0} disabled />
-            <SidebarNavItem label="PAX reports" disabled />
+            <SidebarNavItem href="/dashboard/reports" label="PAX reports" />
           </div>
         </nav>
 
