@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const TODAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date().getDay()];
@@ -10,6 +10,19 @@ export default function BriefsBoard({ clients, ptName }) {
   const [selectedId, setSelectedId] = useState(clients?.[0]?.id || null);
   const [briefs, setBriefs] = useState({}); // id -> { loading, error, data }
   const [notes, setNotes] = useState({});   // id -> { loading, list }
+  const [rosterWidth, setRosterWidth] = useState(330);
+  const rosterWidthRef = useRef(330);
+  const rosterElRef = useRef(null);
+  const draggingRef = useRef(false);
+  const leftRef = useRef(0);
+
+  function startDrag(e) {
+    e.preventDefault();
+    draggingRef.current = true;
+    leftRef.current = rosterElRef.current ? rosterElRef.current.getBoundingClientRect().left : 0;
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+  }
 
   async function loadBrief(id) {
     setBriefs((b) => ({ ...b, [id]: { loading: true } }));
@@ -76,7 +89,38 @@ export default function BriefsBoard({ clients, ptName }) {
       if (!briefs[selectedId]) loadBrief(selectedId);
       if (!notes[selectedId]) loadNotes(selectedId);
     }
+    try {
+      const saved = parseInt(localStorage.getItem('pact_briefs_roster_w') || '', 10);
+      if (saved >= 260 && saved <= 560) {
+        setRosterWidth(saved);
+        rosterWidthRef.current = saved;
+      }
+    } catch {}
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    function onMove(e) {
+      if (!draggingRef.current) return;
+      const w = Math.min(560, Math.max(260, e.clientX - leftRef.current));
+      rosterWidthRef.current = w;
+      setRosterWidth(w);
+    }
+    function onUp() {
+      if (!draggingRef.current) return;
+      draggingRef.current = false;
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      try {
+        localStorage.setItem('pact_briefs_roster_w', String(rosterWidthRef.current));
+      } catch {}
+    }
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
   }, []);
 
   const selected = roster.find((c) => c.id === selectedId) || null;
@@ -93,7 +137,7 @@ export default function BriefsBoard({ clients, ptName }) {
   return (
     <div className="flex h-screen">
       {/* Roster column */}
-      <div className="w-[330px] flex-shrink-0 border-r border-[#E2E6EB] overflow-y-auto p-6 bg-white">
+      <div ref={rosterElRef} className="flex-shrink-0 overflow-y-auto p-6 bg-white" style={{ width: rosterWidth }}>
         <div className="inline-block pt-2 border-t-2 border-[#D92D20] mb-3">
           <span className="font-['Inter'] font-semibold text-[11px] text-[#D92D20] uppercase tracking-[2.5px]">This week</span>
         </div>
@@ -116,6 +160,15 @@ export default function BriefsBoard({ clients, ptName }) {
           <DayGroup day="Unscheduled" clients={unscheduled} selectedId={selectedId} onSelect={selectClient} muted />
         )}
       </div>
+
+      {/* Resizer */}
+      <div
+        onPointerDown={startDrag}
+        role="separator"
+        aria-orientation="vertical"
+        title="Drag to resize"
+        className="w-1.5 flex-shrink-0 cursor-col-resize bg-[#E2E6EB] hover:bg-[#D92D20] active:bg-[#D92D20] transition-colors"
+      />
 
       {/* Brief panel */}
       <div className="flex-1 overflow-y-auto p-6 sm:p-8 min-w-0 bg-[#F4F6F8]">
