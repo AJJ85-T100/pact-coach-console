@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 const STATUS = {
   at_risk: { label: 'At risk', color: '#D92D20', bg: '#FBEBEA' },
@@ -23,6 +23,44 @@ export default function AtRiskBoard({ clients, ptName }) {
   const [selectedId, setSelectedId] = useState(null);
   const [drafts, setDrafts] = useState({});
   const [copied, setCopied] = useState(false);
+
+  // Resizable divider between list and detail
+  const [listWidth, setListWidth] = useState(340);
+  const [dragging, setDragging] = useState(false);
+  const listWidthRef = useRef(340);
+  const draggingRef = useRef(false);
+  const rowRef = useRef(null);
+
+  useEffect(() => {
+    try {
+      const saved = parseInt(localStorage.getItem('pact_atrisk_list_w') || '', 10);
+      if (saved >= 260 && saved <= 680) { setListWidth(saved); listWidthRef.current = saved; }
+    } catch { /* noop */ }
+  }, []);
+
+  useEffect(() => {
+    function onMove(e) {
+      if (!draggingRef.current || !rowRef.current) return;
+      const left = rowRef.current.getBoundingClientRect().left;
+      const w = Math.max(260, Math.min(680, e.clientX - left));
+      listWidthRef.current = w;
+      setListWidth(w);
+    }
+    function onUp() {
+      if (!draggingRef.current) return;
+      draggingRef.current = false;
+      setDragging(false);
+      try { localStorage.setItem('pact_atrisk_list_w', String(listWidthRef.current)); } catch { /* noop */ }
+    }
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, []);
+
+  function startDrag(e) { e.preventDefault(); draggingRef.current = true; setDragging(true); }
 
   useEffect(() => {
     let alive = true;
@@ -55,8 +93,11 @@ export default function AtRiskBoard({ clients, ptName }) {
     setDrafts((d) => ({ ...d, [id]: { loading: true } }));
     try {
       const res = await fetch(`/api/at-risk/${id}`, { method: 'POST', cache: 'no-store' });
-      const j = await res.json();
-      if (!res.ok) throw new Error(j.error || 'Could not draft a message.');
+      const text = await res.text();
+      let j = {};
+      try { j = text ? JSON.parse(text) : {}; } catch { j = {}; }
+      if (!res.ok) throw new Error(j.error || `Request failed (${res.status}).`);
+      if (!j.draft_message && !j.diagnosis) throw new Error(j.error || 'PAX returned an empty draft.');
       setDrafts((d) => ({ ...d, [id]: { data: j } }));
     } catch (e) {
       setDrafts((d) => ({ ...d, [id]: { error: e.message } }));
@@ -96,9 +137,9 @@ export default function AtRiskBoard({ clients, ptName }) {
             <p className="font-['Inter'] text-sm text-[#4A4A4A]">Every active athlete is holding their pacts this week. PAX will flag anyone who starts to drift — you'll see them here first.</p>
           </div>
         ) : (
-          <div className="flex flex-col lg:flex-row gap-5">
+          <div ref={rowRef} className={`flex ${dragging ? 'select-none' : ''}`}>
             {/* List */}
-            <div className="lg:w-[340px] flex-shrink-0 space-y-2">
+            <div style={{ width: listWidth }} className="flex-shrink-0 space-y-2">
               {flagged.map((c) => {
                 const st = STATUS[c.status] || STATUS.watch;
                 const s = c.stats || {};
@@ -121,6 +162,11 @@ export default function AtRiskBoard({ clients, ptName }) {
                   </button>
                 );
               })}
+            </div>
+
+            {/* Draggable divider */}
+            <div onMouseDown={startDrag} className="w-4 flex-shrink-0 cursor-col-resize flex items-center justify-center group" title="Drag to resize">
+              <div className={`w-px h-full transition-colors ${dragging ? 'bg-[#0A2540]' : 'bg-[#E2E6EB] group-hover:bg-[#0A2540]'}`} />
             </div>
 
             {/* Detail */}
