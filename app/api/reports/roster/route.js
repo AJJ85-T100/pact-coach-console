@@ -27,6 +27,16 @@ function statusOf({ adherencePct, daysLogged }) {
   return 'strong';
 }
 
+// 0-100 risk score: weighted blend of silence and low adherence. Drives the
+// at-risk list ranking and the risk meter. No model call — pure arithmetic.
+function riskScore({ daysSilent, adherencePct, daysLogged }) {
+  const ds = daysSilent == null ? 21 : daysSilent;
+  let s = Math.min(55, (ds / 14) * 55);
+  s += ((100 - (adherencePct == null ? 0 : adherencePct)) / 100) * 35;
+  if (!daysLogged) s += 10;
+  return Math.round(Math.min(100, Math.max(0, s)));
+}
+
 export async function GET(req) {
   noStore();
 
@@ -64,19 +74,26 @@ export async function GET(req) {
   let prevRows = [];
   let customRows = [];
   let progRows = [];
+  let msgRows = [];
 
   if (ids.length) {
-    const [a, b, c, d] = await Promise.all([
+    const since90 = new Date(now - 90 * DAY).toISOString();
+    const [a, b, c, d, e] = await Promise.all([
       service.from('daily_pacts').select('client_id, wins_completed, total_wins, status').in('client_id', ids).gt('date', thisStart).lte('date', thisEnd),
       service.from('daily_pacts').select('client_id, wins_completed, total_wins').in('client_id', ids).gt('date', prevStart).lte('date', thisStart),
       service.from('custom_pacts').select('client_id, current_streak').in('client_id', ids),
       service.from('programs').select('client_id, name, weeks, start_date').in('client_id', ids).eq('status', 'active'),
+      service.from('conversations').select('client_id, created_at').in('client_id', ids).eq('role', 'user').gte('created_at', since90).order('created_at', { ascending: false }),
     ]);
     thisRows = a.data || [];
     prevRows = b.data || [];
     customRows = c.data || [];
     progRows = d.data || [];
+    msgRows = e.data || [];
   }
+
+  const lastMsgBy = {};
+  for (const r of msgRows) if (!lastMsgBy[r.client_id]) lastMsgBy[r.client_id] = r.created_at;
 
   const byClient = (rows) => {
     const m = {};
@@ -111,6 +128,9 @@ export async function GET(req) {
     }
 
     const stats = { adherencePct, prevPct, delta, wins, total, daysLogged, slipDays, streak };
+    const lastMsgIso = lastMsgBy[c.id] || null;
+    const days_silent = lastMsgIso ? Math.floor((now - new Date(lastMsgIso).getTime()) / DAY) : null;
+    const risk_score = riskScore({ daysSilent: days_silent, adherencePct, daysLogged });
     return {
       id: c.id,
       name: c.name,
@@ -121,6 +141,9 @@ export async function GET(req) {
       program_week: programWeek,
       program_weeks: prog?.weeks || null,
       status: statusOf(stats),
+      days_silent,
+      last_activity: lastMsgIso ? lastMsgIso.slice(0, 10) : null,
+      risk_score,
       stats,
     };
   });
