@@ -14,20 +14,47 @@ const EQUIPMENT = ['Barbell & plates', 'Dumbbells', 'Squat rack', 'Bench', 'Cabl
 const EXPERIENCE = ['Beginner', 'Intermediate', 'Advanced'];
 const STYLES = ['Strength', 'Hypertrophy', 'Hybrid', 'Running / endurance', 'General fitness'];
 
-const STEPS = ['You', 'Goal', 'Your week', 'Where you train', 'The basics', 'Stay connected'];
+const STEPS = ['You', 'Goal', 'Your why', 'Your week', 'Where you train', 'The basics', 'Stay connected'];
+
+function resizeImage(file, maxDim, quality) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = reject;
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = reject;
+      img.onload = () => {
+        let { width, height } = img;
+        if (width >= height && width > maxDim) { height = Math.round((height * maxDim) / width); width = maxDim; }
+        else if (height > maxDim) { width = Math.round((width * maxDim) / height); height = maxDim; }
+        const canvas = document.createElement('canvas');
+        canvas.width = width; canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
 
 export default function OnboardWizard({ token, coachName, clientName, clientPhone }) {
-  const [step, setStep] = useState(0); // 0 = welcome, 1..6 = STEPS, then done
+  const [step, setStep] = useState(0);
   const [form, setForm] = useState({
     name: clientName || '',
     email: '',
     goal: '',
     event_name: '',
     event_date: '',
+    motivation: '',
+    tried_before: '',
+    why_now: '',
+    biggest_blocker: '',
     training_days: [],
     training_time: '',
     gym: '',
     equipment_list: [],
+    gym_photo_url: '',
     current_weight: '',
     target_weight: '',
     experience_level: '',
@@ -38,6 +65,10 @@ export default function OnboardWizard({ token, coachName, clientName, clientPhon
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
   const [done, setDone] = useState(null);
+
+  const [photoPreview, setPhotoPreview] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [photoErr, setPhotoErr] = useState(null);
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
   const toggle = (k, v) => setForm((f) => {
@@ -50,6 +81,30 @@ export default function OnboardWizard({ token, coachName, clientName, clientPhon
     if (step === 2) return !!form.goal;
     return true;
   };
+
+  async function handlePhoto(file) {
+    if (!file) return;
+    setPhotoErr(null);
+    setUploading(true);
+    try {
+      const dataUrl = await resizeImage(file, 1280, 0.8);
+      const res = await fetch('/api/onboard/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, image: dataUrl }),
+      });
+      const text = await res.text();
+      let j = {};
+      try { j = text ? JSON.parse(text) : {}; } catch { j = {}; }
+      if (!res.ok || !j.url) throw new Error(j.error || 'Upload failed.');
+      set('gym_photo_url', j.url);
+      setPhotoPreview(dataUrl);
+    } catch (e) {
+      setPhotoErr(e.message);
+    } finally {
+      setUploading(false);
+    }
+  }
 
   async function submit() {
     setSubmitting(true);
@@ -158,6 +213,31 @@ export default function OnboardWizard({ token, coachName, clientName, clientPhon
       )}
 
       {step === 3 && (
+        <Step title="What's driving this?" sub="The bit most apps skip — and the bit that actually keeps you going. PAX leans on this when motivation dips. All optional, but worth a minute.">
+          <Field label="Why do you want this?">
+            <textarea value={form.motivation} onChange={(e) => set('motivation', e.target.value)} rows={2} maxLength={1000}
+              placeholder="Be honest — what's the real reason behind it?"
+              className="w-full bg-bg border border-border rounded px-3.5 py-3 text-sm text-blue placeholder:text-muted focus:outline-none focus:border-blue resize-none" />
+          </Field>
+          <Field label="What have you tried before?">
+            <textarea value={form.tried_before} onChange={(e) => set('tried_before', e.target.value)} rows={2} maxLength={1000}
+              placeholder="Past attempts — what worked, what didn't"
+              className="w-full bg-bg border border-border rounded px-3.5 py-3 text-sm text-blue placeholder:text-muted focus:outline-none focus:border-blue resize-none" />
+          </Field>
+          <Field label="Why now?">
+            <textarea value={form.why_now} onChange={(e) => set('why_now', e.target.value)} rows={2} maxLength={1000}
+              placeholder="What's made this the moment to start?"
+              className="w-full bg-bg border border-border rounded px-3.5 py-3 text-sm text-blue placeholder:text-muted focus:outline-none focus:border-blue resize-none" />
+          </Field>
+          <Field label="What's tripped you up before?">
+            <textarea value={form.biggest_blocker} onChange={(e) => set('biggest_blocker', e.target.value)} rows={2} maxLength={1000}
+              placeholder="The thing that's derailed you in the past"
+              className="w-full bg-bg border border-border rounded px-3.5 py-3 text-sm text-blue placeholder:text-muted focus:outline-none focus:border-blue resize-none" />
+          </Field>
+        </Step>
+      )}
+
+      {step === 4 && (
         <Step title="How does your week run?" sub="Which days you usually train, and when. PAX uses this to time its check-ins.">
           <Field label="Training days">
             <div className="grid grid-cols-7 gap-1.5">
@@ -182,7 +262,7 @@ export default function OnboardWizard({ token, coachName, clientName, clientPhon
         </Step>
       )}
 
-      {step === 4 && (
+      {step === 5 && (
         <Step title="Where do you train?" sub="So your programmes only use kit you can actually get to.">
           <Field label="Gym or setup" optional hint="Name your gym, or 'home gym', 'commercial gym', etc.">
             <input value={form.gym} onChange={(e) => set('gym', e.target.value)} placeholder="e.g. PureGym Shoreditch" maxLength={80}
@@ -198,10 +278,30 @@ export default function OnboardWizard({ token, coachName, clientName, clientPhon
               ))}
             </div>
           </Field>
+          <Field label="A photo of your gym" optional hint="Helps your coach picture your setup — soon, PAX will read the kit straight from it.">
+            {photoPreview || form.gym_photo_url ? (
+              <div className="relative">
+                <img src={photoPreview || form.gym_photo_url} alt="Your gym" className="w-full h-40 object-cover rounded border border-border" />
+                <button type="button" onClick={() => { setPhotoPreview(null); set('gym_photo_url', ''); }}
+                  className="absolute top-2 right-2 bg-blue/90 text-white text-[11px] font-semibold uppercase tracking-wider px-2.5 py-1.5 rounded">
+                  Replace
+                </button>
+              </div>
+            ) : (
+              <label className={`flex flex-col items-center justify-center gap-1.5 border-2 border-dashed border-border rounded-lg py-7 cursor-pointer hover:border-blue transition-colors ${uploading ? 'opacity-60 pointer-events-none' : ''}`}>
+                <span className="text-blue text-2xl leading-none">+</span>
+                <span className="text-xs font-semibold text-blue uppercase tracking-wider">{uploading ? 'Uploading…' : 'Add a photo'}</span>
+                <span className="text-[11px] text-muted">Take one now or choose from your camera roll</span>
+                <input type="file" accept="image/*" capture="environment" className="hidden"
+                  onChange={(e) => handlePhoto(e.target.files?.[0])} />
+              </label>
+            )}
+            {photoErr && <p className="text-[11px] text-red mt-1.5">{photoErr} You can skip this and carry on.</p>}
+          </Field>
         </Step>
       )}
 
-      {step === 5 && (
+      {step === 6 && (
         <Step title="A few specifics" sub="All optional — but the more PAX knows, the sharper it gets.">
           <div className="grid grid-cols-2 gap-3">
             <Field label="Current weight">
@@ -237,7 +337,7 @@ export default function OnboardWizard({ token, coachName, clientName, clientPhon
         </Step>
       )}
 
-      {step === 6 && (
+      {step === 7 && (
         <Step title="Stay connected" sub="PAX lives in WhatsApp — no app to download.">
           <Field label="Your WhatsApp number" hint="Include the country code, e.g. +44 7700 900123.">
             <input type="tel" value={form.whatsapp_phone} onChange={(e) => set('whatsapp_phone', e.target.value)} placeholder="+44 7700 900123" maxLength={20}
@@ -252,7 +352,6 @@ export default function OnboardWizard({ token, coachName, clientName, clientPhon
         </Step>
       )}
 
-      {/* Footer nav */}
       <div className="flex items-center gap-3 mt-8">
         {step > 0 && !submitting && (
           <button type="button" onClick={() => setStep((s) => s - 1)}
