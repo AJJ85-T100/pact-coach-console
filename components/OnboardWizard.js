@@ -204,12 +204,12 @@ export default function OnboardWizard({ token, coachName, clientName, clientPhon
       {step === 5 && (
         <Step title="A few specifics" sub="All optional — but the more PAX knows, the sharper it gets.">
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Current weight (kg)" optional>
-              <input type="number" inputMode="decimal" value={form.current_weight} onChange={(e) => set('current_weight', e.target.value)} placeholder="80"
+            <Field label="Current weight">
+              <input type="number" inputMode="decimal" value={form.current_weight} onChange={(e) => set('current_weight', e.target.value)} placeholder="80 kg"
                 className="w-full bg-bg border border-border rounded px-3.5 py-3 text-sm text-blue placeholder:text-muted focus:outline-none focus:border-blue" />
             </Field>
-            <Field label="Target weight (kg)" optional>
-              <input type="number" inputMode="decimal" value={form.target_weight} onChange={(e) => set('target_weight', e.target.value)} placeholder="75"
+            <Field label="Target weight">
+              <input type="number" inputMode="decimal" value={form.target_weight} onChange={(e) => set('target_weight', e.target.value)} placeholder="75 kg"
                 className="w-full bg-bg border border-border rounded px-3.5 py-3 text-sm text-blue placeholder:text-muted focus:outline-none focus:border-blue" />
             </Field>
           </div>

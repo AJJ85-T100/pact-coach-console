@@ -48,6 +48,10 @@ function parseBotEvent(key) {
 
   if (/bad[\s_-]?week/.test(low)) return { text: 'flagged a tough week', type: 'badweek' };
 
+  if (/onboard|signed[\s_-]?up|joined|new[\s_-]?client/.test(low)) {
+    return { text: 'just completed onboarding — review their profile and schedule a call', type: 'onboarded' };
+  }
+
   if (/anniversary|milestone/.test(low)) {
     const u = low.match(/(\d+)\s*(year|month|week|day)/);
     if (u) return { text: `reached their ${u[1]}-${u[2]} milestone`, type: 'anniversary' };
@@ -669,7 +673,7 @@ function ActivityFeed({ events, clientById }) {
               <ul className="divide-y divide-border">
                 {g.items.map((e, i) => {
                   const c = clientById[e.clientId];
-                  const celebratory = e.kind === 'pr' || e.kind === 'anniversary' || e.kind === 'milestone' || e.kind === 'streak';
+                  const celebratory = e.kind === 'pr' || e.kind === 'anniversary' || e.kind === 'milestone' || e.kind === 'streak' || e.kind === 'onboarded';
                   return (
                     <li key={i} className={`px-5 py-3 flex items-start gap-3 ${celebratory ? 'bg-emerald-50' : ''}`}>
                       <ActivityIcon kind={e.kind} />
@@ -700,6 +704,7 @@ function ActivityIcon({ kind }) {
     anniversary: { bg: 'bg-emerald-500', char: '★', tx: 'text-white' },
     milestone:   { bg: 'bg-emerald-500', char: '★', tx: 'text-white' },
     streak:      { bg: 'bg-emerald-500', char: '◆', tx: 'text-white' },
+    onboarded:   { bg: 'bg-blue',        char: '+', tx: 'text-white' },
     steps:       { bg: 'bg-blue',        char: '↑', tx: 'text-white' },
     badweek:     { bg: 'bg-warn',        char: '!', tx: 'text-white' },
     slip:        { bg: 'bg-warn',        char: '!', tx: 'text-white' },

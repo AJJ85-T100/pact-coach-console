@@ -77,6 +77,15 @@ export async function POST(request) {
       .update({ used_at: new Date().toISOString(), used_by_client_id: client.id })
       .eq('id', invite.id);
 
+    // Notify the coach: surfaces in the dashboard activity feed as a prompt to
+    // review the new profile and schedule a first call. Non-critical — never
+    // block the client's success on it.
+    try {
+      await service.from('milestones').insert({ client_id: client.id, key: 'completed_onboarding' });
+    } catch (e) {
+      console.error('[onboard] milestone insert failed (non-fatal)', e);
+    }
+
     return NextResponse.json({ ok: true, client_id: client.id, name: client.name });
   } catch (e) {
     console.error('[onboard] exception', e);
