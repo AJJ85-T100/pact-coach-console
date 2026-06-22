@@ -1,131 +1,85 @@
+/**
+ * POST /api/onboard/complete
+ *
+ * Public (token-authorised) — the invite token is the credential, there is no
+ * coach session on the client device. Validates the token (exists, unused, not
+ * expired), creates the client under the invite's pt_id, then locks the token
+ * so the link can't be reused.
+ *
+ * Body: { token: string, form: {...} }
+ */
+
 import { NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/server';
 
-// ============================================================
-// POST /api/onboard/complete
-//
-// Public — no Supabase auth. Authorisation comes from the
-// invite token, which is single-use and time-bound.
-//
-// Body: { token, data: {...wizard fields} }
-// Returns: { client_id, success: true }
-// ============================================================
+export const dynamic = 'force-dynamic';
+
+const GOAL_SLUGS = new Set(['fat_loss', 'muscle_gain', 'maintain', 'performance']);
+
+const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
+const str = (v, max = 200) => { const s = (v ?? '').toString().trim(); return s ? s.slice(0, max) : null; };
+const isoDate = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(v || '') ? v : null);
+
 export async function POST(request) {
   try {
-    const { token, data } = await request.json().catch(() => ({}));
-
-    if (!token || !data) {
-      return NextResponse.json({ error: 'Missing token or data' }, { status: 400 });
-    }
+    const body = await request.json().catch(() => ({}));
+    const token = (body.token || '').toString().trim();
+    if (!token) return NextResponse.json({ error: 'Missing invite token.' }, { status: 400 });
 
     const service = createServiceClient();
 
-    // Re-validate token (concurrency safety — another request might have used it)
-    const { data: invite } = await service
-      .from('invite_tokens')
-      .select('id, pt_id, expires_at, used_at')
-      .eq('token', token)
-      .maybeSingle();
+    const { data: invite, error: invErr } = await service
+      .from('invite_tokens').select('*').eq('token', token).maybeSingle();
+    if (invErr) return NextResponse.json({ error: 'Could not validate the invite.' }, { status: 500 });
+    if (!invite) return NextResponse.json({ error: 'This invite link is not valid.' }, { status: 404 });
+    if (invite.used_at) return NextResponse.json({ error: 'This invite link has already been used.' }, { status: 409 });
+    if (new Date(invite.expires_at) < new Date()) return NextResponse.json({ error: 'This invite link has expired.' }, { status: 410 });
 
-    if (!invite)             return NextResponse.json({ error: 'Invalid invite' }, { status: 404 });
-    if (invite.used_at)      return NextResponse.json({ error: 'Invite already used' }, { status: 409 });
-    if (new Date(invite.expires_at) < new Date()) {
-      return NextResponse.json({ error: 'Invite expired' }, { status: 410 });
-    }
+    const f = body.form || {};
+    const goal = GOAL_SLUGS.has(f.goal) ? f.goal : null;
+    const today = new Date().toISOString().slice(0, 10);
+    const cw = num(f.current_weight);
 
-    // ============================================================
-    // Build client row
-    // ============================================================
-    const num = (v) => {
-      const n = parseFloat(v);
-      return Number.isFinite(n) ? n : null;
-    };
-    const txt = (v) => {
-      const s = (v || '').toString().trim();
-      return s.length ? s : null;
-    };
-
-    const current = num(data.current_weight);
-
-    const clientRow = {
-      pt_id:            invite.pt_id,
-      name:             txt(data.name),
-      whatsapp_phone:   txt(data.phone),
-      goal:             txt(data.goal),
-      current_weight:   current,
-      start_weight:     current,        // start = current at onboarding
-      target_weight:    num(data.target_weight),
-      start_date:       new Date().toISOString().slice(0, 10),
-      target_date:      txt(data.target_date),
-      event_name:       data.has_event ? txt(data.event_name) : null,
-      event_date:       data.has_event ? txt(data.event_date) : null,
-      experience_level: txt(data.experience_level),
-      training_style:   txt(data.training_style),
-      training_days:    Array.isArray(data.training_days) && data.training_days.length
-                          ? data.training_days
-                          : null,
-      training_time:    txt(data.training_time),
-      gym:              txt(data.gym),
-      injuries:         txt(data.injuries),
-      squat_max:        num(data.squat_max),
-      bench_press_max:  num(data.bench_press_max),
-      deadlift_max:     num(data.deadlift_max),
-      ohp_max:          num(data.ohp_max),
+    const row = {
+      pt_id: invite.pt_id,
+      name: str(f.name, 80) || invite.client_name || 'New client',
+      email: str(f.email, 120),
+      goal,
+      current_weight: cw,
+      start_weight: cw,
+      target_weight: num(f.target_weight),
+      start_date: today,
+      training_days: Array.isArray(f.training_days) ? f.training_days.slice(0, 7) : [],
+      training_time: str(f.training_time, 40),
+      gym: str(f.gym, 80),
+      equipment_list: Array.isArray(f.equipment_list) ? f.equipment_list.slice(0, 24) : [],
+      experience_level: str(f.experience_level, 40),
+      training_style: str(f.training_style, 40),
+      injuries: str(f.injuries, 500),
+      event_name: str(f.event_name, 80),
+      event_date: isoDate(f.event_date),
+      target_date: isoDate(f.event_date),
+      whatsapp_phone: str(f.whatsapp_phone, 20) || invite.client_phone || null,
+      whatsapp_invited_at: new Date().toISOString(),
+      status: 'active',
       onboarding_complete: true,
-      onboarding_step:  6,
-      status:           'active',
-      last_seen_at:     new Date().toISOString(),
     };
 
-    const { data: client, error: insertError } = await service
-      .from('clients')
-      .insert(clientRow)
-      .select('id, name')
-      .single();
-
-    if (insertError) {
-      console.error('Client insert failed:', insertError);
-      return NextResponse.json({ error: 'Could not create client record' }, { status: 500 });
+    const { data: client, error: cErr } = await service
+      .from('clients').insert(row).select('id, name').single();
+    if (cErr) {
+      console.error('[onboard] client insert failed', cErr);
+      return NextResponse.json({ error: 'Could not create your profile. Please let your coach know.' }, { status: 500 });
     }
 
-    // ============================================================
-    // Store the "what does success look like" answer in memory
-    // so PAX can reference it later
-    // ============================================================
-    if (data.goal_motivation && data.goal_motivation.trim()) {
-      await service
-        .from('client_memory')
-        .insert({
-          client_id: client.id,
-          key:   'success_definition',
-          value: data.goal_motivation.trim(),
-        });
-    }
-
-    // ============================================================
-    // Mark invite as used
-    // ============================================================
-    const { error: tokenError } = await service
+    await service
       .from('invite_tokens')
-      .update({
-        used_at:            new Date().toISOString(),
-        used_by_client_id:  client.id,
-      })
+      .update({ used_at: new Date().toISOString(), used_by_client_id: client.id })
       .eq('id', invite.id);
 
-    if (tokenError) {
-      console.error('Token mark-used failed:', tokenError);
-      // Client was created though — return success anyway
-    }
-
-    return NextResponse.json({
-      client_id: client.id,
-      name:      client.name,
-      success:   true,
-    });
-
+    return NextResponse.json({ ok: true, client_id: client.id, name: client.name });
   } catch (e) {
-    console.error('Onboard complete exception:', e);
-    return NextResponse.json({ error: 'Server error' }, { status: 500 });
+    console.error('[onboard] exception', e);
+    return NextResponse.json({ error: 'Something went wrong. Please try again.' }, { status: 500 });
   }
 }
