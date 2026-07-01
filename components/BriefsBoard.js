@@ -392,6 +392,8 @@ function BriefPanel({ client, state, noteState, onSaveNote, onRetry }) {
             </Section>
           )}
 
+          <ConversationThread clientId={client.id} since={since?.at} />
+
           <div className="flex gap-2 mt-6">
             <a href={`/dashboard/clients/${client.id}/programs`} className="bg-white border border-[#E2E6EB] hover:border-[#0A2540] text-[#0A2540] font-['Inter'] font-semibold text-[11px] uppercase tracking-[0.05em] px-4 py-2.5 rounded-[6px] transition-colors">Open programmes</a>
             <button onClick={onRetry} className="bg-white border border-[#E2E6EB] hover:border-[#0A2540] text-[#0A2540] font-['Inter'] font-semibold text-[11px] uppercase tracking-[0.05em] px-4 py-2.5 rounded-[6px] transition-colors">Regenerate</button>
@@ -542,6 +544,106 @@ function Section({ title, tag, children }) {
 
 function Empty() {
   return <p className="font-['Inter'] text-[13px] text-[#8A95A3] italic">Not enough data in this window yet.</p>;
+}
+
+// The raw PAX <-> client thread — the evidence beneath the brief. Collapsed by
+// default (the brief is the headline); lazy-loads on open and aligns to the
+// same "since last met" window so it reads as what the brief was built from.
+function ConversationThread({ clientId, since }) {
+  const [open, setOpen] = useState(false);
+  const [state, setState] = useState(null); // { loading } | { error } | { messages }
+
+  async function load() {
+    setState({ loading: true });
+    try {
+      const qs = since ? `?since=${encodeURIComponent(since)}` : '';
+      const res = await fetch(`/api/conversation/${clientId}${qs}`, { cache: 'no-store' });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || 'Could not load the conversation.');
+      setState({ messages: j.messages || [] });
+    } catch (e) {
+      setState({ error: e.message });
+    }
+  }
+
+  function toggle() {
+    const next = !open;
+    setOpen(next);
+    if (next && !state) load();
+  }
+
+  const messages = state?.messages || [];
+
+  return (
+    <div className="mb-5">
+      <button
+        onClick={toggle}
+        className="w-full flex items-center justify-between bg-white border border-[#E2E6EB] rounded-[8px] px-4 py-3 hover:border-[#0A2540] transition-colors"
+      >
+        <span className="font-['Montserrat'] font-bold text-[11px] tracking-[0.16em] uppercase text-[#0A2540]">
+          The conversation
+        </span>
+        <span className="font-['Inter'] text-[11px] font-semibold text-[#8A95A3] uppercase tracking-[0.05em]">
+          {open ? 'Hide \u2013' : 'Read the actual thread \u2192'}
+        </span>
+      </button>
+
+      {open && (
+        <div className="mt-2 bg-white border border-[#E2E6EB] rounded-[8px] p-4 max-h-[440px] overflow-y-auto">
+          {state?.loading && (
+            <p className="font-['Inter'] text-[12px] text-[#8A95A3]">Loading the thread{'\u2026'}</p>
+          )}
+          {state?.error && (
+            <p className="font-['Inter'] text-[12px] text-[#D92D20]">{state.error}</p>
+          )}
+          {state && !state.loading && !state.error && (
+            messages.length === 0 ? (
+              <p className="font-['Inter'] text-[13px] text-[#8A95A3] italic">
+                No messages{since ? ' since you last met' : ' yet'}.
+              </p>
+            ) : (
+              <>
+                <p className="font-['Inter'] text-[10px] text-[#8A95A3] uppercase tracking-[0.1em] mb-3">
+                  {messages.length} message{messages.length === 1 ? '' : 's'}{since ? ' since you last met' : ''}
+                </p>
+                <div className="space-y-2">
+                  {messages.map((m, i) => {
+                    const isPax = m.role === 'assistant';
+                    return (
+                      <div key={i} className={`flex ${isPax ? 'justify-start' : 'justify-end'}`}>
+                        <div
+                          className={`max-w-[78%] px-3 py-2 rounded-[8px] font-['Inter'] text-[13px] leading-[1.5] ${
+                            isPax
+                              ? 'bg-[#EBF1F5] text-[#0A2540] rounded-bl-[2px]'
+                              : 'bg-[#D92D20] text-white rounded-br-[2px]'
+                          }`}
+                        >
+                          <div className="whitespace-pre-wrap break-words">{m.content}</div>
+                          <div className={`text-[10px] mt-1 ${isPax ? 'text-[#8A95A3]' : 'text-white/70'}`}>
+                            {isPax ? 'PAX' : 'Client'} {'\u00b7'} {fmtMsgTime(m.created_at)}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function fmtMsgTime(iso) {
+  try {
+    return new Date(iso).toLocaleString('en-GB', {
+      day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
+    });
+  } catch {
+    return '';
+  }
 }
 
 function fmtDate(iso) {
