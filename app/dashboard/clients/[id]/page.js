@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { createClient, createServiceClient } from '@/lib/supabase/server';
 import PactsPanel from '@/components/PactsPanel';
+import DangerZone from '@/components/DangerZone';
 
 // ============================================================
 // Helpers
@@ -646,6 +647,8 @@ export default async function ClientDetailPage({ params }) {
             </div>
           </div>
         </div>
+
+        <DangerZone clientId={client.id} clientName={client.name || ''} />
 
       </div>
     </div>
