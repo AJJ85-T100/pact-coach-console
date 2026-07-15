@@ -10,6 +10,7 @@
  * injury-vs-plan safety check.
  *
  * GET and POST both generate (GET is handy for a browser smoke test). Read-only.
+ * Access: requireClientAccess — the signed-in coach must own this client.
  *
  * Requires ANTHROPIC_API_KEY in the environment.
  */
@@ -17,6 +18,7 @@
 import { NextResponse } from 'next/server';
 import { unstable_noStore as noStore } from 'next/cache';
 import { supabaseAdmin as supabase } from '@/lib/supabase/admin';
+import { requireClientAccess } from '@/lib/auth/requireClientAccess';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,9 +26,10 @@ const MODEL = 'claude-sonnet-4-6';
 const FALLBACK_DAYS = 14; // if no meeting has been logged yet
 
 async function generate(clientId) {
-  if (!clientId || typeof clientId !== 'string') {
-    return NextResponse.json({ error: 'clientId required.' }, { status: 400 });
-  }
+  // Ownership guard: the signed-in coach must own this client.
+  const access = await requireClientAccess(clientId);
+  if (access.error) return access.error;
+
   if (!process.env.ANTHROPIC_API_KEY) {
     return NextResponse.json({ error: 'ANTHROPIC_API_KEY is not set on the server.' }, { status: 500 });
   }

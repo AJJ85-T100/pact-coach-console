@@ -4,11 +4,7 @@
  * Returns the raw PAX <-> client message thread so a coach can read the
  * evidence behind a brief. Read-only.
  *
- * Trust model mirrors /api/briefs: uses the service-role admin client and
- * takes clientId straight from the URL — the UI only ever passes clientIds
- * from the coach's own roster. (A real per-coach ownership check across all
- * these routes is a separate hardening pass, worth doing before the pilot
- * widens.)
+ * Access: requireClientAccess — the signed-in coach must own this client.
  *
  * Optional query: ?since=<ISO>  bounds the thread to a window — pass the
  * brief's "since last met" anchor so the thread matches the brief. Without
@@ -18,6 +14,7 @@
 import { NextResponse } from 'next/server';
 import { unstable_noStore as noStore } from 'next/cache';
 import { supabaseAdmin as supabase } from '@/lib/supabase/admin';
+import { requireClientAccess } from '@/lib/auth/requireClientAccess';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,23 +22,9 @@ const DEFAULT_LIMIT = 120; // recent window when no anchor is supplied
 const MAX_MESSAGES = 200;  // hard cap when bounded by ?since
 
 async function load(clientId, sinceParam) {
-  if (!clientId || typeof clientId !== 'string') {
-    return NextResponse.json({ error: 'clientId required.' }, { status: 400 });
-  }
-
-  const { data: client, error: clientErr } = await supabase
-    .from('clients')
-    .select('id, name')
-    .eq('id', clientId)
-    .maybeSingle();
-
-  if (clientErr) {
-    console.error('[conversation] client load failed', clientErr);
-    return NextResponse.json({ error: 'Could not load client.' }, { status: 500 });
-  }
-  if (!client) {
-    return NextResponse.json({ error: 'Client not found.' }, { status: 404 });
-  }
+  const access = await requireClientAccess(clientId);
+  if (access.error) return access.error;
+  const { client } = access;
 
   const since = sinceParam && /^\d{4}-\d{2}-\d{2}/.test(sinceParam) ? sinceParam : null;
 
@@ -49,7 +32,7 @@ async function load(clientId, sinceParam) {
   let query = supabase
     .from('conversations')
     .select('role, content, created_at')
-    .eq('client_id', clientId)
+    .eq('client_id', client.id)
     .order('created_at', { ascending: false })
     .limit(since ? MAX_MESSAGES : DEFAULT_LIMIT);
   if (since) query = query.gte('created_at', since);
@@ -78,7 +61,15 @@ async function load(clientId, sinceParam) {
 
 export async function GET(req, context) {
   noStore();
-  const params = await context.params;
-  const since = new URL(req.url).searchParams.get('since');
-  return load(params?.clientId, since);
+  const url = new URL(req.url);
+
+  // Primary: the dynamic route param. Fallback: the last path segment — so a
+  // folder-name mismatch (segment not literally [clientId]) can't silently
+  // break the route.
+  const params = await context?.params;
+  const seg = url.pathname.split('/').filter(Boolean).pop();
+  const clientId =
+    params?.clientId || (seg && seg !== 'conversation' ? decodeURIComponent(seg) : null);
+
+  return load(clientId, url.searchParams.get('since'));
 }
