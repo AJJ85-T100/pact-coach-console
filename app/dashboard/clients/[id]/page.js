@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { createClient, createServiceClient } from '@/lib/supabase/server';
+import PactsPanel from '@/components/PactsPanel';
 
 // ============================================================
 // Helpers
@@ -469,35 +470,11 @@ export default async function ClientDetailPage({ params }) {
             )}
           </Card>
 
-          <Card title="Active pacts">
-            <div className="space-y-4">
+          {/* Coach-authored pacts — live panel: add, pause, watch status */}
+          <PactsPanel clientId={client.id} />
 
-              {/* Custom pacts */}
-              {customPacts.length === 0 ? (
-                <p className="text-muted text-xs">No custom pacts active.</p>
-              ) : (
-                <div>
-                  <SubLabel>Custom · {customPacts.length}</SubLabel>
-                  <ul className="space-y-2 mt-2">
-                    {customPacts.map((p, i) => (
-                      <li key={i} className="flex items-start justify-between gap-3 text-sm">
-                        <div className="min-w-0">
-                          <div className="font-semibold text-blue">{p.name}</div>
-                          {p.rule && <div className="text-xs text-muted">{p.rule}</div>}
-                          {p.cadence && <div className="text-[10px] text-muted tracking-wider uppercase mt-0.5">{p.cadence}</div>}
-                        </div>
-                        <div className="text-right flex-shrink-0">
-                          <div className="font-display font-bold text-blue text-base">{p.current_streak ?? 0}</div>
-                          <div className="text-[9px] text-muted tracking-wider uppercase">Streak</div>
-                          {p.longest_streak ? (
-                            <div className="text-[9px] text-muted mt-0.5">Best: {p.longest_streak}</div>
-                          ) : null}
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
+          <Card title="Pact context">
+            <div className="space-y-4">
 
               {/* This week's weekly pact */}
               {weeklyPact && (
@@ -563,8 +540,8 @@ export default async function ClientDetailPage({ params }) {
               )}
 
               {/* Nothing at all */}
-              {customPacts.length === 0 && !weeklyPact && !weekendPact && stakes.length === 0 && cosigners.length === 0 && (
-                <p className="text-muted text-xs">Nothing committed yet. PAX will help build the first pact.</p>
+              {!weeklyPact && !weekendPact && stakes.length === 0 && cosigners.length === 0 && (
+                <p className="text-muted text-xs">No weekly pact, stakes or cosigners yet.</p>
               )}
             </div>
           </Card>
