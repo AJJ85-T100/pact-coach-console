@@ -6,11 +6,13 @@
  * the coach, and a low-pressure re-engagement message the coach can send. The
  * message is deliberately guilt-free and plan-free — the brief is to reopen the
  * conversation, not to coach. Mirrors the reports route's grounding discipline.
+ * Access: requireClientAccess — the signed-in coach must own this client.
  */
 
 import { NextResponse } from 'next/server';
 import { unstable_noStore as noStore } from 'next/cache';
 import { supabaseAdmin as supabase } from '@/lib/supabase/admin';
+import { requireClientAccess } from '@/lib/auth/requireClientAccess';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,9 +31,10 @@ function daysSince(iso) {
 }
 
 async function generate(clientId) {
-  if (!clientId || typeof clientId !== 'string') {
-    return NextResponse.json({ error: 'clientId required.' }, { status: 400 });
-  }
+  // Ownership guard: the signed-in coach must own this client.
+  const access = await requireClientAccess(clientId);
+  if (access.error) return access.error;
+
   if (!process.env.ANTHROPIC_API_KEY) {
     return NextResponse.json({ error: 'ANTHROPIC_API_KEY is not set on the server.' }, { status: 500 });
   }
