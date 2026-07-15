@@ -13,6 +13,7 @@
 import { NextResponse } from 'next/server';
 import { unstable_noStore as noStore } from 'next/cache';
 import { supabaseAdmin as supabase } from '@/lib/supabase/admin';
+import { requireCoach } from '@/lib/auth/requireCoach';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,6 +24,9 @@ const noStoreHeaders = { 'Cache-Control': 'no-store, max-age=0, must-revalidate'
 // ============================================================================
 export async function GET() {
   noStore();
+
+  const coach = await requireCoach();
+  if (coach.error) return coach.error;
 
   const { data, error } = await supabase
     .from('exercises')
@@ -42,6 +46,9 @@ export async function GET() {
 // ============================================================================
 export async function POST(req) {
   noStore();
+
+  const coach = await requireCoach();
+  if (coach.error) return coach.error;
 
   let body;
   try {

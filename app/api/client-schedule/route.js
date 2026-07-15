@@ -9,6 +9,7 @@
 import { NextResponse } from 'next/server';
 import { unstable_noStore as noStore } from 'next/cache';
 import { supabaseAdmin as supabase } from '@/lib/supabase/admin';
+import { requireClientAccess } from '@/lib/auth/requireClientAccess';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,6 +29,10 @@ export async function POST(req) {
   if (!clientId) {
     return NextResponse.json({ error: 'clientId required.' }, { status: 400 });
   }
+
+  const access = await requireClientAccess(clientId);
+  if (access.error) return access.error;
+
 
   const days = Array.isArray(body.days)
     ? VALID.filter((d) => body.days.includes(d)) // dedupe + keep canonical week order

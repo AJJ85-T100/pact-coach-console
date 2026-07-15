@@ -8,6 +8,7 @@
 import { NextResponse } from 'next/server';
 import { unstable_noStore as noStore } from 'next/cache';
 import { supabaseAdmin as supabase } from '@/lib/supabase/admin';
+import { requireClientAccess } from '@/lib/auth/requireClientAccess';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,6 +19,10 @@ export async function GET(req) {
   if (!clientId) {
     return NextResponse.json({ error: 'clientId required.' }, { status: 400 });
   }
+
+  const access = await requireClientAccess(clientId);
+  if (access.error) return access.error;
+
   const { data, error } = await supabase
     .from('coach_meetings')
     .select('id, met_at, note')
@@ -46,6 +51,10 @@ export async function POST(req) {
   if (!clientId) {
     return NextResponse.json({ error: 'clientId required.' }, { status: 400 });
   }
+
+  const access = await requireClientAccess(clientId);
+  if (access.error) return access.error;
+
   const note = body.note && typeof body.note === 'string' ? body.note.trim() || null : null;
 
   const { data, error } = await supabase

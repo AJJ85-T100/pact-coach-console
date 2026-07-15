@@ -13,6 +13,7 @@
 import { NextResponse } from 'next/server';
 import { unstable_noStore as noStore } from 'next/cache';
 import { supabaseAdmin as supabase } from '@/lib/supabase/admin';
+import { requireClientAccess } from '@/lib/auth/requireClientAccess';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,6 +24,10 @@ export async function POST(req, context) {
   if (!clientId || typeof clientId !== 'string') {
     return NextResponse.json({ error: 'clientId required.' }, { status: 400 });
   }
+
+  const access = await requireClientAccess(clientId);
+  if (access.error) return access.error;
+
 
   let body;
   try {
@@ -82,6 +87,10 @@ export async function GET(_req, context) {
   if (!clientId || typeof clientId !== 'string') {
     return NextResponse.json({ error: 'clientId required.' }, { status: 400 });
   }
+
+  const access = await requireClientAccess(clientId);
+  if (access.error) return access.error;
+
 
   const [{ data: client, error: clientErr }, { data: programs, error: programsErr }] = await Promise.all([
     supabase

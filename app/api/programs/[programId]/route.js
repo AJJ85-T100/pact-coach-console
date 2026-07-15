@@ -20,6 +20,7 @@
 import { NextResponse } from 'next/server';
 import { unstable_noStore as noStore } from 'next/cache';
 import { supabaseAdmin as supabase } from '@/lib/supabase/admin';
+import { requireProgramAccess } from '@/lib/auth/requireCoach';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,6 +35,10 @@ export async function GET(_req, context) {
   if (!programId || typeof programId !== 'string') {
     return NextResponse.json({ error: 'programId required.' }, { status: 400 });
   }
+
+  const access = await requireProgramAccess(programId);
+  if (access.error) return access.error;
+
 
   const [programRes, sessionsRes] = await Promise.all([
     supabase
@@ -92,6 +97,10 @@ export async function PATCH(req, context) {
   if (!programId || typeof programId !== 'string') {
     return NextResponse.json({ error: 'programId required.' }, { status: 400 });
   }
+
+  const access = await requireProgramAccess(programId);
+  if (access.error) return access.error;
+
 
   let body;
   try {
@@ -206,6 +215,10 @@ export async function DELETE(_req, context) {
   if (!programId || typeof programId !== 'string') {
     return NextResponse.json({ error: 'programId required.' }, { status: 400 });
   }
+
+  const access = await requireProgramAccess(programId);
+  if (access.error) return access.error;
+
 
   // Confirm it exists first so we can return a clean 404 rather than a silent no-op.
   const { data: existing, error: findErr } = await supabase

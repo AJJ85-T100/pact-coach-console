@@ -12,6 +12,7 @@
 
 import { NextResponse } from 'next/server';
 import { supabaseAdmin as supabase } from '@/lib/supabase/admin';
+import { requireSessionAccess } from '@/lib/auth/requireCoach';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,6 +23,10 @@ export async function PATCH(req, context) {
   if (!sessionId || typeof sessionId !== 'string') {
     return NextResponse.json({ error: 'sessionId required.' }, { status: 400 });
   }
+
+  const access = await requireSessionAccess(sessionId);
+  if (access.error) return access.error;
+
 
   let body;
   try {
@@ -80,6 +85,10 @@ export async function DELETE(_req, context) {
   if (!sessionId || typeof sessionId !== 'string') {
     return NextResponse.json({ error: 'sessionId required.' }, { status: 400 });
   }
+
+  const access = await requireSessionAccess(sessionId);
+  if (access.error) return access.error;
+
 
   const { error } = await supabase
     .from('program_sessions')

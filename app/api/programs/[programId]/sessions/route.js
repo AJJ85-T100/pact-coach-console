@@ -11,6 +11,7 @@
 import { NextResponse } from 'next/server';
 import { unstable_noStore as noStore } from 'next/cache';
 import { supabaseAdmin as supabase } from '@/lib/supabase/admin';
+import { requireProgramAccess } from '@/lib/auth/requireCoach';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,6 +28,10 @@ export async function GET(_req, context) {
   if (!programId || typeof programId !== 'string') {
     return NextResponse.json({ error: 'programId required.' }, { status: 400 });
   }
+
+  const access = await requireProgramAccess(programId);
+  if (access.error) return access.error;
+
 
   const { data, error } = await supabase
     .from('program_sessions')
@@ -54,6 +59,10 @@ export async function POST(req, context) {
   if (!programId || typeof programId !== 'string') {
     return NextResponse.json({ error: 'programId required.' }, { status: 400 });
   }
+
+  const access = await requireProgramAccess(programId);
+  if (access.error) return access.error;
+
 
   let body;
   try {

@@ -14,6 +14,8 @@
 
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { requireClientAccess } from '@/lib/auth/requireClientAccess';
+import { tokenMatchesClient } from '@/lib/auth/requireCoach';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -47,6 +49,14 @@ export async function POST(req, context) {
   if (!clientId || typeof clientId !== 'string') {
     return NextResponse.json({ error: 'clientId required.' }, { status: 400 });
   }
+
+  // Coach session, or the athlete's own invite token (?token=...).
+  const access = await requireClientAccess(clientId);
+  if (access.error) {
+    const t = new URL(req.url).searchParams.get('token');
+    if (!(t && await tokenMatchesClient(clientId, t))) return access.error;
+  }
+
 
   let body;
   try {
@@ -91,6 +101,14 @@ export async function GET(_req, context) {
   if (!clientId || typeof clientId !== 'string') {
     return NextResponse.json({ error: 'clientId required.' }, { status: 400 });
   }
+
+  // Coach session, or the athlete's own invite token (?token=...).
+  const access = await requireClientAccess(clientId);
+  if (access.error) {
+    const t = new URL(_req.url).searchParams.get('token');
+    if (!(t && await tokenMatchesClient(clientId, t))) return access.error;
+  }
+
 
   const { data, error } = await supabase
     .from('clients')

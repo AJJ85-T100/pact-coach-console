@@ -12,6 +12,7 @@
 import { NextResponse } from 'next/server';
 import { unstable_noStore as noStore } from 'next/cache';
 import { supabaseAdmin as supabase } from '@/lib/supabase/admin';
+import { requireClientAccess } from '@/lib/auth/requireClientAccess';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,6 +20,10 @@ export async function GET(req) {
   noStore();
   const clientId = new URL(req.url).searchParams.get('clientId');
   if (!clientId) return NextResponse.json({ error: 'clientId required.' }, { status: 400 });
+
+  const access = await requireClientAccess(clientId);
+  if (access.error) return access.error;
+
 
   const { data, error } = await supabase
     .from('appointments')
@@ -51,6 +56,10 @@ export async function POST(req) {
   const clientId = typeof body.clientId === 'string' ? body.clientId : null;
   if (!clientId) return NextResponse.json({ error: 'clientId required.' }, { status: 400 });
 
+  const access = await requireClientAccess(clientId);
+  if (access.error) return access.error;
+
+
   const when = body.scheduledAt ? new Date(body.scheduledAt) : null;
   if (!when || isNaN(when.getTime())) {
     return NextResponse.json({ error: 'A valid date/time is required.' }, { status: 400 });
@@ -74,6 +83,13 @@ export async function DELETE(req) {
   noStore();
   const id = new URL(req.url).searchParams.get('id');
   if (!id) return NextResponse.json({ error: 'id required.' }, { status: 400 });
+
+  // Ownership chain: appointment -> client -> this coach.
+  const { data: appt } = await supabase
+    .from('appointments').select('client_id').eq('id', id).maybeSingle();
+  if (!appt) return NextResponse.json({ error: 'Not found.' }, { status: 404 });
+  const access = await requireClientAccess(appt.client_id);
+  if (access.error) return access.error;
 
   const { error } = await supabase.from('appointments').update({ status: 'cancelled' }).eq('id', id);
   if (error) {

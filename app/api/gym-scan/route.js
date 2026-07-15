@@ -13,6 +13,7 @@
 
 import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
+import { requireCoach, tokenValidOrUsed } from '@/lib/auth/requireCoach';
 
 // Allow up to 30s for the vision call — Claude Vision typically takes 5-15s
 // on a single image, this gives headroom for network/queue variance.
@@ -40,6 +41,16 @@ Return ONLY a JSON object with this exact structure, no markdown fences, no expl
 const VALID_MEDIA_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 
 export async function POST(req) {
+  // Auth: a signed-in coach, or an invite token (the athlete's credential
+  // during onboarding — pass ?token=... on the request URL).
+  const coach = await requireCoach();
+  if (coach.error) {
+    const t = new URL(req.url).searchParams.get('token');
+    if (!(t && await tokenValidOrUsed(t))) {
+      return NextResponse.json({ error: 'Unauthorised.' }, { status: 401 });
+    }
+  }
+
   if (!process.env.ANTHROPIC_API_KEY) {
     return NextResponse.json(
       { error: 'ANTHROPIC_API_KEY not configured on the server.' },
