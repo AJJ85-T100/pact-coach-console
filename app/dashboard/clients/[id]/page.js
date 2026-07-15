@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { createClient, createServiceClient } from '@/lib/supabase/server';
 import PactsPanel from '@/components/PactsPanel';
 import DangerZone from '@/components/DangerZone';
+import NudgeTool from '@/components/NudgeTool';
 
 // ============================================================
 // Helpers
@@ -473,6 +474,9 @@ export default async function ClientDetailPage({ params }) {
 
           {/* Coach-authored pacts — live panel: add, pause, watch status */}
           <PactsPanel clientId={client.id} />
+
+          {/* Manual nudge — coach brief in, PAX message out, in your voice */}
+          <NudgeTool clientId={client.id} clientFirstName={(client.name || '').split(' ')[0]} />
 
           <Card title="Pact context">
             <div className="space-y-4">
