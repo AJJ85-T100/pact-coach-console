@@ -1,13 +1,14 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 const GOALS = [
-  { slug: 'fat_loss', label: 'Lose fat', sub: 'Lean down, hold strength' },
-  { slug: 'muscle_gain', label: 'Build muscle', sub: 'Add size and strength' },
-  { slug: 'maintain', label: 'Maintain & feel good', sub: 'Stay consistent and healthy' },
-  { slug: 'performance', label: 'Perform', sub: 'Train for an event or sport' },
+  { slug: 'fat_loss', letter: 'L', label: 'Lose fat', sub: 'Lean down, hold strength' },
+  { slug: 'muscle_gain', letter: 'M', label: 'Build muscle', sub: 'Add size and strength' },
+  { slug: 'maintain', letter: 'F', label: 'Maintain & feel good', sub: 'Stay consistent and healthy' },
+  { slug: 'performance', letter: 'R', label: 'Perform', sub: 'Train for an event or sport' },
 ];
+const LENGTHS = [30, 45, 60, 75, 90];
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const TIMES = ['Mornings', 'Lunchtime', 'Evenings', 'It varies'];
 const EQUIPMENT = ['Barbell & plates', 'Dumbbells', 'Squat rack', 'Bench', 'Cable machine', 'Kettlebells', 'Resistance bands', 'Cardio machines', 'Bodyweight only'];
@@ -52,7 +53,11 @@ export default function OnboardWizard({ token, coachName, clientName, clientPhon
     biggest_blocker: '',
     training_days: [],
     training_time: '',
+    usual_time: '',
+    session_length: '',
     gym: '',
+    gym_place_id: '',
+    gym_address: '',
     equipment_list: [],
     gym_photo_url: '',
     current_weight: '',
@@ -161,15 +166,31 @@ export default function OnboardWizard({ token, coachName, clientName, clientPhon
       )}
 
       {step === 0 && (
-        <div className="text-center py-4">
-          <p className="text-[11px] font-semibold text-red tracking-[0.2em] uppercase mb-3">You're invited</p>
-          <h1 className="font-display font-extrabold text-blue text-3xl uppercase tracking-tight leading-none mb-4">
-            Let's set up<br />your coaching
-          </h1>
-          <p className="text-body text-sm leading-relaxed mb-1">
-            {coachName} has invited you to PACT.Health — the platform that keeps you both connected between sessions.
-          </p>
-          <p className="text-muted text-sm leading-relaxed">Takes about five minutes. Let's go.</p>
+        <div className="py-2">
+          <div className="bg-bg-2 rounded-lg p-4 mb-6 text-left">
+            <div className="flex items-center gap-2.5 mb-2.5">
+              <div className="w-9 h-9 bg-blue text-white grid place-items-center font-display font-black text-base rounded relative flex-shrink-0">
+                P
+                <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-red rounded-full border-2 border-bg-2" />
+              </div>
+              <div>
+                <div className="font-display font-bold text-blue text-sm leading-none">PAX</div>
+                <div className="text-[10px] text-muted uppercase tracking-wider font-semibold mt-0.5">introduced by {coachName}</div>
+              </div>
+            </div>
+            <p className="text-blue text-sm leading-relaxed">
+              Hey{clientName ? ` ${clientName.split(' ')[0]}` : ''}, I'm <strong>PAX</strong>. {coachName} asked me to get you set up.
+              I'll be here between your sessions — {coachName} runs your plan, I keep you on track.
+              A few quick questions and we're going.
+            </p>
+          </div>
+          <div className="text-center">
+            <p className="text-[11px] font-semibold text-red tracking-[0.2em] uppercase mb-3">You're invited</p>
+            <h1 className="font-display font-extrabold text-blue text-3xl uppercase tracking-tight leading-none mb-4">
+              Let's set up<br />your coaching
+            </h1>
+            <p className="text-muted text-sm leading-relaxed">Takes about five minutes. Let's go.</p>
+          </div>
         </div>
       )}
 
@@ -189,13 +210,24 @@ export default function OnboardWizard({ token, coachName, clientName, clientPhon
       {step === 2 && (
         <Step title="What are you here for?" sub="Pick the one that fits best — you can refine it with your coach later.">
           <div className="space-y-2.5">
-            {GOALS.map((g) => (
-              <button key={g.slug} onClick={() => set('goal', g.slug)} type="button"
-                className={`w-full text-left rounded-lg border p-4 transition-colors ${form.goal === g.slug ? 'border-red border-2 bg-red/5' : 'border-border bg-white hover:border-blue'}`}>
-                <div className="font-display font-bold text-blue text-base">{g.label}</div>
-                <div className="text-muted text-xs mt-0.5">{g.sub}</div>
-              </button>
-            ))}
+            {GOALS.map((g) => {
+              const on = form.goal === g.slug;
+              return (
+                <button key={g.slug} onClick={() => set('goal', g.slug)} type="button"
+                  className={`w-full text-left rounded-lg border p-4 transition-colors flex items-center gap-3.5 ${on ? 'border-red border-2 bg-red/5' : 'border-border bg-white hover:border-blue'}`}>
+                  <div className={`w-10 h-10 rounded grid place-items-center font-display font-black text-base flex-shrink-0 ${on ? 'bg-red text-white' : 'bg-bg text-blue'}`}>
+                    {g.letter}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-display font-bold text-blue text-base">{g.label}</div>
+                    <div className="text-muted text-xs mt-0.5">{g.sub}</div>
+                  </div>
+                  <div className={`w-5 h-5 rounded grid place-items-center text-[11px] font-bold flex-shrink-0 transition-colors ${on ? 'bg-red text-white' : 'border border-border text-transparent'}`}>
+                    ✓
+                  </div>
+                </button>
+              );
+            })}
           </div>
           {form.goal === 'performance' && (
             <div className="mt-4 space-y-4 pt-4 border-t border-border">
@@ -259,14 +291,28 @@ export default function OnboardWizard({ token, coachName, clientName, clientPhon
               ))}
             </div>
           </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Usual start time" optional>
+              <input type="time" value={form.usual_time} onChange={(e) => set('usual_time', e.target.value)}
+                className="w-full bg-bg border border-border rounded px-3.5 py-3 text-sm text-blue focus:outline-none focus:border-blue" />
+            </Field>
+            <Field label="Time per session" optional>
+              <select value={form.session_length} onChange={(e) => set('session_length', e.target.value)}
+                className="w-full bg-bg border border-border rounded px-3.5 py-3 text-sm text-blue focus:outline-none focus:border-blue">
+                <option value="">Choose…</option>
+                {LENGTHS.map((m) => <option key={m} value={m}>~{m} min</option>)}
+                <option value="120">90+ min</option>
+              </select>
+            </Field>
+          </div>
+          <p className="text-[11px] text-muted -mt-2">Your coach builds sessions to fit the time you actually have — a 40-minute lunch window gets a different plan to a free evening.</p>
         </Step>
       )}
 
       {step === 5 && (
         <Step title="Where do you train?" sub="So your programmes only use kit you can actually get to.">
-          <Field label="Gym or setup" optional hint="Name your gym, or 'home gym', 'commercial gym', etc.">
-            <input value={form.gym} onChange={(e) => set('gym', e.target.value)} placeholder="e.g. PureGym Shoreditch" maxLength={80}
-              className="w-full bg-bg border border-border rounded px-3.5 py-3 text-sm text-blue placeholder:text-muted focus:outline-none focus:border-blue" />
+          <Field label="Find your gym" optional hint="Search by name — or just type it and carry on. 'Home gym' works too.">
+            <GymSearch token={token} form={form} set={set} />
           </Field>
           <Field label="What do you have access to?">
             <div className="flex flex-wrap gap-2">
@@ -410,6 +456,100 @@ function Field({ label, hint, optional, children }) {
       </label>
       {children}
       {hint && <p className="text-[11px] text-muted mt-1.5">{hint}</p>}
+    </div>
+  );
+}
+
+// Gym lookup backed by Google Places (via /api/onboard/gym-search).
+// Degrades to a plain text field: typing always sets form.gym directly, so
+// if the search API is unavailable or finds nothing, manual entry just works.
+// Picking a result additionally stores the address + place_id, which is what
+// lets the coach see exactly where it is (and later, infer the kit).
+function GymSearch({ token, form, set }) {
+  const [results, setResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+  const [open, setOpen] = useState(false);
+  const timer = useRef(null);
+  const seq = useRef(0);
+
+  const query = form.gym;
+
+  useEffect(() => {
+    if (timer.current) clearTimeout(timer.current);
+    // A picked gym (has place_id) or a short query -> no search.
+    if (!query || query.trim().length < 3 || form.gym_place_id) {
+      setResults([]); setOpen(false); setSearching(false);
+      return;
+    }
+    timer.current = setTimeout(async () => {
+      const mySeq = ++seq.current;
+      setSearching(true);
+      try {
+        const res = await fetch(`/api/onboard/gym-search?token=${encodeURIComponent(token)}&q=${encodeURIComponent(query.trim())}`);
+        const j = await res.json().catch(() => ({}));
+        if (mySeq !== seq.current) return; // stale response
+        const list = res.ok && Array.isArray(j.results) ? j.results : [];
+        setResults(list);
+        setOpen(list.length > 0);
+      } catch {
+        if (mySeq === seq.current) { setResults([]); setOpen(false); }
+      } finally {
+        if (mySeq === seq.current) setSearching(false);
+      }
+    }, 350);
+    return () => timer.current && clearTimeout(timer.current);
+  }, [query, form.gym_place_id, token]);
+
+  function pick(r) {
+    set('gym', r.name);
+    set('gym_address', r.address || '');
+    set('gym_place_id', r.place_id || '');
+    setOpen(false); setResults([]);
+  }
+
+  function clearPick() {
+    set('gym', ''); set('gym_address', ''); set('gym_place_id', '');
+  }
+
+  if (form.gym_place_id) {
+    return (
+      <div className="bg-white border-2 border-red rounded-lg p-3.5 flex items-start gap-3">
+        <div className="w-9 h-9 bg-red text-white rounded grid place-items-center font-display font-black text-sm flex-shrink-0">
+          {form.gym.slice(0, 2).toUpperCase()}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="font-display font-bold text-blue text-sm">{form.gym}</div>
+          {form.gym_address && <div className="text-muted text-[11px] mt-0.5 leading-snug">{form.gym_address}</div>}
+        </div>
+        <button type="button" onClick={clearPick}
+          className="text-[10px] font-semibold uppercase tracking-wider text-muted hover:text-blue transition-colors flex-shrink-0 mt-0.5">
+          Change
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative">
+      <input value={form.gym} onChange={(e) => set('gym', e.target.value)} placeholder="e.g. PureGym Shoreditch" maxLength={80}
+        className="w-full bg-bg border border-border rounded px-3.5 py-3 text-sm text-blue placeholder:text-muted focus:outline-none focus:border-blue" />
+      {searching && (
+        <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[10px] text-muted uppercase tracking-wider font-semibold">Searching…</span>
+      )}
+      {open && (
+        <div className="absolute z-10 left-0 right-0 mt-1.5 bg-white border border-border rounded-lg shadow-card overflow-hidden">
+          {results.slice(0, 5).map((r) => (
+            <button key={r.place_id} type="button" onClick={() => pick(r)}
+              className="w-full text-left px-3.5 py-2.5 hover:bg-bg transition-colors border-b border-border last:border-b-0">
+              <div className="text-blue text-sm font-semibold">{r.name}</div>
+              {r.address && <div className="text-muted text-[11px] mt-0.5 truncate">{r.address}</div>}
+            </button>
+          ))}
+          <div className="px-3.5 py-2 bg-bg text-[10px] text-muted">
+            Can't see it? Just keep typing — the name alone is fine.
+          </div>
+        </div>
+      )}
     </div>
   );
 }
