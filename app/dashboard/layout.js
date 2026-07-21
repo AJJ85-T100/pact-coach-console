@@ -72,6 +72,8 @@ export default async function DashboardLayout({ children }) {
               This Week
             </div>
             <SidebarNavItem href="/dashboard/activity" label="Activity feed" />
+            <SidebarNavItem href="/dashboard/form-review" label="Form review" />
+            <SidebarNavItem href="/dashboard/notes" label="Client notes" />
             <SidebarNavItem href="/dashboard/briefs" label="Pre-session briefs" />
             <SidebarNavItem href="/dashboard/at-risk" label="At-risk clients" count={atRiskCount} badge={atRiskCount > 0} />
             <SidebarNavItem href="/dashboard/reports" label="PAX reports" />
