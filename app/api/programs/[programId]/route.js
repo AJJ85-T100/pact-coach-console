@@ -193,15 +193,122 @@ export async function PATCH(req, context) {
     return NextResponse.json({ error: 'Programme not found.' }, { status: 404 });
   }
 
+  // On activation, materialize the plan into dated `programme` rows — the
+  // table PAX's brain reads (morning briefs, yesterday memory, session
+  // completion, pact integrity). This is the bridge that makes the coach's
+  // programme the one PAX actually delivers.
+  let materialized = null;
+  if (patch.status === 'active') {
+    materialized = await materializeProgramme(data);
+  }
+
   return NextResponse.json(
     {
       program: data,
       autoArchivedCount,
+      materialized,
     },
     {
       headers: { 'Cache-Control': 'no-store, max-age=0, must-revalidate' },
     },
   );
+}
+
+// ============================================================================
+// materializeProgramme — expand an activated program into dated rows in the
+// bot's `programme` table.
+//
+// Date mapping: sessions are indexed by (week_number, day_index) with no
+// weekday attached, so each week's sessions are spread across sensible
+// training-day slots (offsets from that week's Monday). The base week is the
+// week containing start_date (today when start_date is unset).
+//
+// Only FUTURE rows are replaced (date >= today) — past `programme` rows are
+// history (completion flags feed pact integrity) and are never touched.
+// ============================================================================
+const SLOT_PRESETS = {
+  1: [0],                  // Mon
+  2: [0, 3],               // Mon Thu
+  3: [0, 2, 4],            // Mon Wed Fri
+  4: [0, 1, 3, 4],         // Mon Tue Thu Fri
+  5: [0, 1, 2, 3, 4],      // Mon–Fri
+  6: [0, 1, 2, 3, 4, 5],   // Mon–Sat
+  7: [0, 1, 2, 3, 4, 5, 6],
+};
+
+async function materializeProgramme(program) {
+  try {
+    const { data: sessions, error } = await supabase
+      .from('program_sessions')
+      .select('name, week_number, day_index, exercises, notes')
+      .eq('program_id', program.id)
+      .order('week_number', { ascending: true })
+      .order('day_index', { ascending: true });
+
+    if (error) {
+      console.error('[materialize] sessions load failed', error);
+      return { rows: 0, error: 'Could not load sessions.' };
+    }
+    if (!sessions?.length) return { rows: 0 };
+
+    // Monday of the week containing start_date (or today when unset).
+    const base = program.start_date
+      ? new Date(`${program.start_date}T00:00:00Z`)
+      : new Date();
+    const monday = new Date(base);
+    monday.setUTCDate(base.getUTCDate() - ((base.getUTCDay() + 6) % 7));
+
+    const byWeek = new Map();
+    for (const s of sessions) {
+      const wk = s.week_number || 1;
+      if (!byWeek.has(wk)) byWeek.set(wk, []);
+      byWeek.get(wk).push(s);
+    }
+
+    const rows = [];
+    for (const [week, list] of byWeek) {
+      const slots = SLOT_PRESETS[Math.min(list.length, 7)] || SLOT_PRESETS[7];
+      list.forEach((s, i) => {
+        const d = new Date(monday);
+        d.setUTCDate(monday.getUTCDate() + (week - 1) * 7 + slots[Math.min(i, slots.length - 1)]);
+        rows.push({
+          client_id:    program.client_id,
+          date:         d.toISOString().split('T')[0],
+          week_number:  week,
+          session_name: s.name,
+          is_rest:      false,
+          exercises:    Array.isArray(s.exercises) ? s.exercises : [],
+          notes:        s.notes || '',
+        });
+      });
+    }
+
+    const today = new Date().toISOString().split('T')[0];
+    const future = rows.filter((r) => r.date >= today);
+    if (!future.length) return { rows: 0 };
+
+    const { error: delErr } = await supabase
+      .from('programme')
+      .delete()
+      .eq('client_id', program.client_id)
+      .gte('date', today);
+    if (delErr) {
+      console.error('[materialize] delete failed', delErr);
+      return { rows: 0, error: 'Could not clear future rows.' };
+    }
+
+    const { error: insErr } = await supabase.from('programme').insert(future);
+    if (insErr) {
+      console.error('[materialize] insert failed', insErr);
+      return { rows: 0, error: 'Could not insert rows.' };
+    }
+
+    console.log(`[materialize] ${future.length} dated rows written for client ${program.client_id} (${program.name})`);
+    return { rows: future.length };
+  } catch (err) {
+    console.error('[materialize] unexpected', err);
+    return { rows: 0, error: 'Unexpected error.' };
+  }
 }
 
 // ============================================================================

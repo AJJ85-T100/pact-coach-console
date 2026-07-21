@@ -153,6 +153,37 @@ export async function POST(request) {
       .update({ used_at: new Date().toISOString(), used_by_client_id: client.id })
       .eq('id', invite.id);
 
+    // Give them a sign-in: create (or find) the Supabase auth user for their
+    // email and stamp clients.auth_user_id — the athlete app resolves them
+    // through RLS via that link. Non-fatal: onboarding never fails on auth.
+    if (row.email) {
+      try {
+        let authUserId = null;
+        const { data: created, error: cuErr } = await service.auth.admin.createUser({
+          email: row.email,
+          email_confirm: true,
+        });
+        if (created?.user) {
+          authUserId = created.user.id;
+        } else if (cuErr) {
+          // Probably already registered — generateLink returns the existing user.
+          const { data: linkData } = await service.auth.admin.generateLink({
+            type: 'magiclink',
+            email: row.email,
+          });
+          authUserId = linkData?.user?.id || null;
+        }
+        if (authUserId) {
+          await service.from('clients').update({ auth_user_id: authUserId }).eq('id', client.id);
+          console.log(`[onboard] auth linked ${row.email} -> client ${client.id}`);
+        } else {
+          console.warn('[onboard] no auth user created/found for', row.email);
+        }
+      } catch (e) {
+        console.error('[onboard] auth link failed (non-fatal)', e);
+      }
+    }
+
     // Notify the coach: surfaces in the dashboard activity feed as a prompt to
     // review the new profile and schedule a first call. Non-critical — never
     // block the client's success on it.
