@@ -17,6 +17,8 @@ const STYLES = ['Strength', 'Hypertrophy', 'Hybrid', 'Running / endurance', 'Gen
 
 const STEPS = ['You', 'Goal', 'Your why', 'Your week', 'Where you train', 'The basics', 'Stay connected'];
 
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
 function resizeImage(file, maxDim, quality) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -82,7 +84,7 @@ export default function OnboardWizard({ token, coachName, clientName, clientPhon
   });
 
   const canAdvance = () => {
-    if (step === 1) return form.name.trim().length > 0;
+    if (step === 1) return form.name.trim().length > 0 && EMAIL_RE.test(form.email.trim());
     if (step === 2) return !!form.goal;
     return true;
   };
@@ -200,7 +202,7 @@ export default function OnboardWizard({ token, coachName, clientName, clientPhon
             <input value={form.name} onChange={(e) => set('name', e.target.value)} placeholder="e.g. Sarah Mitchell" maxLength={80}
               className="w-full bg-bg border border-border rounded px-3.5 py-3 text-sm text-blue placeholder:text-muted focus:outline-none focus:border-blue" />
           </Field>
-          <Field label="Email" optional>
+          <Field label="Email" hint="This is how you'll sign in to log workouts — PAX's morning links won't work without it.">
             <input type="email" value={form.email} onChange={(e) => set('email', e.target.value)} placeholder="you@email.com" maxLength={120}
               className="w-full bg-bg border border-border rounded px-3.5 py-3 text-sm text-blue placeholder:text-muted focus:outline-none focus:border-blue" />
           </Field>

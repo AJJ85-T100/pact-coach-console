@@ -9,6 +9,7 @@
 import { NextResponse } from 'next/server';
 import { unstable_noStore as noStore } from 'next/cache';
 import { requireCoach } from '@/lib/auth/requireCoach';
+import { relayToAthlete } from '@/lib/bot/relay';
 
 export const dynamic = 'force-dynamic';
 
@@ -66,13 +67,28 @@ export async function POST(req) {
     .from('clients').select('pt_id').eq('id', clip.client_id).maybeSingle();
   if (client?.pt_id !== coach.pt.id) return NextResponse.json({ error: 'Not found.' }, { status: 404 });
 
+  const coachNote = typeof body.coach_note === 'string' ? body.coach_note.trim().slice(0, 500) || null : null;
+
   const { error } = await coach.service
     .from('form_clips')
     .update({
       review_status: 'reviewed',
-      coach_note: typeof body.coach_note === 'string' ? body.coach_note.trim().slice(0, 500) || null : null,
+      coach_note: coachNote,
     })
     .eq('id', body.id);
   if (error) return NextResponse.json({ error: 'Could not update.' }, { status: 500 });
-  return NextResponse.json({ ok: true });
+
+  // Close the loop: PAX delivers the coach's feedback to the athlete on
+  // WhatsApp. Non-fatal — the review is saved regardless.
+  let relayed = false;
+  if (coachNote) {
+    const { data: clipMeta } = await coach.service
+      .from('form_clips').select('exercise_name').eq('id', body.id).maybeSingle();
+    relayed = await relayToAthlete(clip.client_id, 'form_review', {
+      note: coachNote,
+      exercise: clipMeta?.exercise_name || null,
+    });
+  }
+
+  return NextResponse.json({ ok: true, relayed });
 }

@@ -7,6 +7,7 @@ import { useEffect, useState, useCallback } from 'react';
 export default function FormReviewPage() {
   const [clips, setClips] = useState(null);
   const [notes, setNotes] = useState({});
+  const [flash, setFlash] = useState(null);
 
   const load = useCallback(async () => {
     const d = await fetch('/api/form-review', { cache: 'no-store' }).then((r) => r.json());
@@ -16,11 +17,17 @@ export default function FormReviewPage() {
   useEffect(() => { load(); }, [load]);
 
   async function review(id) {
-    await fetch('/api/form-review', {
+    const res = await fetch('/api/form-review', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id, coach_note: notes[id] || '' }),
     });
+    const d = await res.json().catch(() => ({}));
+    if (res.ok && (notes[id] || '').trim()) {
+      setFlash(d.relayed === true
+        ? 'Reviewed — PAX is delivering your feedback on WhatsApp.'
+        : 'Reviewed and saved. WhatsApp delivery didn’t go through — the note is still on file.');
+    }
     load();
   }
 
@@ -31,7 +38,13 @@ export default function FormReviewPage() {
     <div className="p-8 max-w-4xl">
       <p className="text-xs font-semibold text-red tracking-[0.2em] uppercase mb-1">Form check</p>
       <h1 className="font-display font-extrabold text-blue text-3xl uppercase tracking-tight mb-1">Form review</h1>
-      <p className="text-body text-sm mb-8">Clips athletes send from the workout logger. Watch, reply, done.</p>
+      <p className="text-body text-sm mb-8">Clips athletes send from the workout logger. Watch, reply, done — PAX delivers your feedback on WhatsApp.</p>
+
+      {flash && (
+        <div className="rounded px-4 py-3 text-sm mb-6 bg-emerald-50 border border-emerald-200 text-emerald-700">
+          {flash}
+        </div>
+      )}
 
       {!clips && <p className="text-body text-sm">Loading…</p>}
       {clips && pending.length === 0 && <p className="text-body text-sm mb-8">Queue&apos;s clear — nothing waiting for review. 🎉</p>}

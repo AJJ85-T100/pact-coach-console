@@ -17,6 +17,7 @@ export const dynamic = 'force-dynamic';
 const GOAL_SLUGS = new Set(['fat_loss', 'muscle_gain', 'maintain', 'performance']);
 
 const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const str = (v, max = 200) => { const s = (v ?? '').toString().trim(); return s ? s.slice(0, max) : null; };
 const isoDate = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(v || '') ? v : null);
 
@@ -103,14 +104,28 @@ export async function POST(request) {
     if (new Date(invite.expires_at) < new Date()) return NextResponse.json({ error: 'This invite link has expired.' }, { status: 410 });
 
     const f = body.form || {};
+
+    // Email is required: it's the athlete's sign-in identity — without it they
+    // can't use the athlete app or PAX's begin-workout links.
+    const email = (str(f.email, 120) || '').toLowerCase();
+    if (!EMAIL_RE.test(email)) {
+      return NextResponse.json({ error: "We need a valid email — it's how you'll sign in to log workouts." }, { status: 400 });
+    }
+
     const goal = GOAL_SLUGS.has(f.goal) ? f.goal : null;
     const today = new Date().toISOString().slice(0, 10);
     const cw = num(f.current_weight);
 
+    // WhatsApp identity for the bot: it routes on `wa_phone` (digits, no +)
+    // and `channel`. Derive them from the number captured at invite time so
+    // PAX can reach the client the moment onboarding completes.
+    const waRaw    = str(f.whatsapp_phone, 20) || invite.client_phone || null;
+    const waDigits = waRaw ? waRaw.replace(/\D/g, '') : null;
+
     const row = {
       pt_id: invite.pt_id,
       name: str(f.name, 80) || invite.client_name || 'New client',
-      email: str(f.email, 120),
+      email,
       goal,
       current_weight: cw,
       start_weight: cw,
@@ -135,7 +150,9 @@ export async function POST(request) {
       event_name: str(f.event_name, 80),
       event_date: isoDate(f.event_date),
       target_date: isoDate(f.event_date),
-      whatsapp_phone: str(f.whatsapp_phone, 20) || invite.client_phone || null,
+      whatsapp_phone: waRaw,
+      wa_phone: waDigits,
+      channel: waDigits ? 'whatsapp' : 'telegram',
       whatsapp_invited_at: new Date().toISOString(),
       status: 'active',
       onboarding_complete: true,
@@ -191,6 +208,21 @@ export async function POST(request) {
       await service.from('milestones').insert({ client_id: client.id, key: 'completed_onboarding' });
     } catch (e) {
       console.error('[onboard] milestone insert failed (non-fatal)', e);
+    }
+
+    // Fire PAX's WhatsApp welcome (approved template) via the bot — the
+    // compliant first touch on the client's cold number. Non-fatal.
+    try {
+      const botUrl = process.env.BOT_URL;
+      if (botUrl && process.env.WELCOME_SECRET && waDigits) {
+        await fetch(`${botUrl.replace(/\/$/, '')}/welcome`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-welcome-secret': process.env.WELCOME_SECRET },
+          body: JSON.stringify({ client_id: client.id }),
+        });
+      }
+    } catch (e) {
+      console.error('[onboard] PAX welcome trigger failed (non-fatal)', e);
     }
 
     // Email the coach (Resend). Env-gated so it silently no-ops until configured.

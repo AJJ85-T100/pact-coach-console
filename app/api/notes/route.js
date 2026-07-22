@@ -11,6 +11,7 @@ import { NextResponse } from 'next/server';
 import { unstable_noStore as noStore } from 'next/cache';
 import { requireCoach } from '@/lib/auth/requireCoach';
 import { requireClientAccess } from '@/lib/auth/requireClientAccess';
+import { relayToAthlete } from '@/lib/bot/relay';
 
 export const dynamic = 'force-dynamic';
 
@@ -62,5 +63,13 @@ export async function POST(req) {
     console.error('[notes] insert failed', error);
     return NextResponse.json({ error: 'Could not save the note.' }, { status: 500 });
   }
-  return NextResponse.json({ note });
+
+  // Close the loop: PAX passes the note on to the athlete over WhatsApp.
+  // Non-fatal — the note is saved (and on the athlete app card) regardless.
+  const relayed = await relayToAthlete(clientId, 'coach_note', {
+    note: text,
+    urgent: !!body?.urgent,
+  });
+
+  return NextResponse.json({ note, relayed });
 }
