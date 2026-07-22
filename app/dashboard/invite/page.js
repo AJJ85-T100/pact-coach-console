@@ -82,7 +82,7 @@ PAX (the AI accountability companion) will introduce themselves once you're done
           New invite
         </p>
         <h1 className="font-display font-extrabold text-blue text-4xl uppercase tracking-tight leading-none mb-2">
-          Invite a client
+          Invite an athlete
         </h1>
         <p className="text-body text-sm">
           Generates a one-time onboarding link. Send it to your athlete via WhatsApp or email — they fill out a 5-minute wizard and PAX takes it from there.
@@ -95,7 +95,7 @@ PAX (the AI accountability companion) will introduce themselves once you're done
         // ============================================================
         <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow-card border border-border p-6 space-y-5">
 
-          <Field label="Client name" optional hint="Pre-fills their greeting in the WhatsApp message">
+          <Field label="Athlete name" optional hint="Pre-fills their greeting in the WhatsApp message">
             <input
               type="text"
               value={form.client_name}

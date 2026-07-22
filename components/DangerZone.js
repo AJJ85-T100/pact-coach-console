@@ -58,7 +58,7 @@ export default function DangerZone({ clientId, clientName }) {
 
       <div className="flex items-center justify-between gap-4 py-2">
         <div>
-          <div className="text-sm font-semibold text-blue">Archive this client</div>
+          <div className="text-sm font-semibold text-blue">Archive this athlete</div>
           <div className="text-xs text-muted mt-0.5">Stops PAX messages and removes them from your active roster. History kept — reversible.</div>
         </div>
         <button onClick={archive} disabled={busy}
@@ -71,7 +71,7 @@ export default function DangerZone({ clientId, clientName }) {
         <div className="flex items-center justify-between gap-4">
           <div>
             <div className="text-sm font-semibold text-blue">Delete permanently</div>
-            <div className="text-xs text-muted mt-0.5">Erases the client and all their data — conversations, pacts, health history. Cannot be undone.</div>
+            <div className="text-xs text-muted mt-0.5">Erases the athlete and all their data — conversations, pacts, health history. Cannot be undone.</div>
           </div>
           {!erasing && (
             <button onClick={() => setErasing(true)} disabled={busy}

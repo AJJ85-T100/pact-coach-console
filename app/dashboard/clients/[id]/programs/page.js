@@ -100,11 +100,11 @@ export default function ProgramsListPage() {
             </span>
           </div>
           <h1 className="font-['Montserrat'] font-extrabold text-3xl sm:text-4xl text-[#0A2540] uppercase tracking-tight leading-none">
-            Programs
+            Programmes
           </h1>
           <p className="font-['Inter'] text-[#4A4A4A] text-sm mt-3">
             {programs.length === 0
-              ? `No programs for ${client.name} yet.`
+              ? `No programmes for ${client.name} yet.`
               : `${programs.length} ${programs.length === 1 ? 'programme' : 'programmes'} for ${client.name}.`}
           </p>
         </div>
@@ -115,7 +115,7 @@ export default function ProgramsListPage() {
             className="inline-flex items-center gap-2 bg-[#D92D20] hover:bg-[#B0241A] text-white font-['Inter'] font-semibold text-[13px] uppercase tracking-[0.4px] px-5 py-3 rounded-[6px] transition-colors"
           >
             <span aria-hidden="true">+</span>
-            New program
+            New programme
           </button>
         )}
       </div>
@@ -161,15 +161,15 @@ function groupByStatus(programs) {
 function Breadcrumb({ client }) {
   return (
     <nav className="mb-6 font-['Inter'] text-[12px] text-[#8A95A3] uppercase tracking-[1.5px] font-semibold">
-      <Link href="/dashboard/clients" className="hover:text-[#0A2540] transition-colors">
-        Clients
+      <Link href="/dashboard/athletes" className="hover:text-[#0A2540] transition-colors">
+        Athletes
       </Link>
       <span className="mx-2">/</span>
       <Link href={`/dashboard/clients/${client.id}`} className="hover:text-[#0A2540] transition-colors">
         {client.name}
       </Link>
       <span className="mx-2">/</span>
-      <span className="text-[#0A2540]">Programs</span>
+      <span className="text-[#0A2540]">Programmes</span>
     </nav>
   );
 }

@@ -136,12 +136,20 @@ export default function BriefsBoard({ clients, ptName }) {
   const state = selectedId ? briefs[selectedId] : null;
   const noteState = selectedId ? notes[selectedId] : null;
 
-  // Group roster by workout weekday (from the active programme; a client can train more than one day).
+  // Group roster by workout weekday. Primary source: the active programme's
+  // workout_days. Fallback: the training days the athlete stated in onboarding
+  // (training_days) — so a brand-new signup lands on their days, not in
+  // "Unscheduled", before their first programme is activated.
+  const daysFor = (c) => {
+    if (Array.isArray(c.workout_days) && c.workout_days.length) return c.workout_days;
+    if (Array.isArray(c.training_days) && c.training_days.length) return c.training_days;
+    return [];
+  };
   const scheduled = WEEKDAYS.map((day) => ({
     day,
-    clients: roster.filter((c) => Array.isArray(c.workout_days) && c.workout_days.includes(day)),
+    clients: roster.filter((c) => daysFor(c).includes(day)),
   })).filter((g) => g.clients.length > 0);
-  const unscheduled = roster.filter((c) => !Array.isArray(c.workout_days) || c.workout_days.length === 0);
+  const unscheduled = roster.filter((c) => daysFor(c).length === 0);
 
   return (
     <div className="flex h-screen">
@@ -247,7 +255,10 @@ function BriefPanel({ client, state, noteState, onSaveNote, onRetry }) {
   const brief = data?.brief;
   const since = data?.since;
   const stats = data?.stats;
-  const days = Array.isArray(client.workout_days) ? client.workout_days : [];
+  const fromProgramme = Array.isArray(client.workout_days) && client.workout_days.length > 0;
+  const days = fromProgramme
+    ? client.workout_days
+    : (Array.isArray(client.training_days) ? client.training_days : []);
 
   return (
     <div className="max-w-2xl">
@@ -272,7 +283,9 @@ function BriefPanel({ client, state, noteState, onSaveNote, onRetry }) {
       <div className="bg-white border border-[#E2E6EB] rounded-[8px] p-4 mb-4">
         <div className="flex items-center justify-between mb-2">
           <span className="font-['Inter'] text-[10px] font-bold uppercase tracking-[0.14em] text-[#8A95A3]">Workout days</span>
-          <span className="font-['Inter'] text-[10px] text-[#8A95A3]">from active programme</span>
+          <span className="font-['Inter'] text-[10px] text-[#8A95A3]">
+            {fromProgramme ? 'from active programme' : days.length ? 'their stated days — no programme yet' : ''}
+          </span>
         </div>
         {days.length === 0 ? (
           <p className="font-['Inter'] text-[12px] text-[#8A95A3] italic">

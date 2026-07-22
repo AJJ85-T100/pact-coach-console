@@ -109,7 +109,11 @@ export default function CoachSignupPage() {
           <form onSubmit={submit} className="bg-white rounded-lg shadow-card p-8">
             <p className="text-xs font-semibold text-red tracking-[0.2em] uppercase mb-1">Coach signup</p>
             <h1 className="font-display font-extrabold text-blue text-2xl mb-1">Set up your practice</h1>
-            <p className="text-body text-sm mb-6">Two minutes to your console. You'll need the signup code from PACT.</p>
+            <p className="text-body text-sm mb-6">
+              Two minutes to your console. The pilot is invite-only, so you'll need the signup code from PACT —
+              no code yet? Email <a href="mailto:hello@pact.healthcare" className="text-red font-semibold">hello@pact.healthcare</a> and
+              we'll get you in.
+            </p>
 
             {err && <div className="text-red text-sm mb-4">{err}</div>}
 

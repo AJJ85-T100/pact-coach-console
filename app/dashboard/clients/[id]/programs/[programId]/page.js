@@ -312,7 +312,7 @@ function Breadcrumb({ client, program, clientId }) {
   return (
     <nav className="mb-6 font-['Inter'] text-[12px] text-[#8A95A3] uppercase tracking-[1.5px] font-semibold">
       <Link href="/dashboard/athletes" className="hover:text-[#0A2540] transition-colors">
-        Clients
+        Athletes
       </Link>
       <span className="mx-2">/</span>
       {client && (
@@ -324,7 +324,7 @@ function Breadcrumb({ client, program, clientId }) {
         </>
       )}
       <Link href={`/dashboard/clients/${clientId}/programs`} className="hover:text-[#0A2540] transition-colors">
-        Programs
+        Programmes
       </Link>
       <span className="mx-2">/</span>
       <span className="text-[#0A2540]">{program.name}</span>

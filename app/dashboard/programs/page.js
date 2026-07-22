@@ -85,7 +85,7 @@ export default async function ProgramsRosterPage() {
         </span>
       </div>
       <h1 className="font-['Montserrat'] font-extrabold text-3xl sm:text-4xl text-[#0A2540] uppercase tracking-tight leading-none mb-2">
-        Programs
+        Programmes
       </h1>
       <p className="font-['Inter'] text-[14px] text-[#4A4A4A] mb-8">
         Every programme across your roster

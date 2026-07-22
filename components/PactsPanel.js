@@ -94,7 +94,7 @@ export default function PactsPanel({ clientId }) {
 
       {pacts !== null && active.length === 0 && !adding && (
         <p className="text-muted text-sm italic mb-4">
-          No pacts yet. These are the weekly wins PAX holds this client to — start with the classics below.
+          No pacts yet. These are the weekly wins PAX holds this athlete to — start with the classics below.
         </p>
       )}
 

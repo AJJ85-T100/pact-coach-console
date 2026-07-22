@@ -1,6 +1,6 @@
-import Link from 'next/link';
 import { createClient, createServiceClient } from '@/lib/supabase/server';
 import { riskScore, riskTier } from '@/lib/risk';
+import RosterExplorer from '@/components/RosterExplorer';
 
 // ============================================================
 // Helpers
@@ -32,24 +32,27 @@ function lastNDays(n) {
 }
 
 // ============================================================
-// RAG classification
+// RAG classification — judged against the COACH-SET per-athlete targets
+// (clients.step_target / protein_target, the same numbers PAX coaches to),
+// falling back to sensible defaults when none are set.
 // ============================================================
 
-// Steps target — could be per-client later, hardcoded default for now
-const STEPS_TARGET    = 8000;
-const PROTEIN_TARGET  = 120; // grams
+const STEPS_TARGET_DEFAULT   = 8000;
+const PROTEIN_TARGET_DEFAULT = 120; // grams
 
-function classifySteps(steps) {
+function classifySteps(steps, target) {
+  const goal = target > 0 ? target : STEPS_TARGET_DEFAULT;
   if (steps == null || steps === 0) return 'red';
-  if (steps >= STEPS_TARGET)         return 'green';
-  if (steps >= STEPS_TARGET * 0.7)   return 'amber';
+  if (steps >= goal)                return 'green';
+  if (steps >= goal * 0.7)          return 'amber';
   return 'red';
 }
 
-function classifyNutrition(record) {
+function classifyNutrition(record, proteinTarget) {
+  const goal = proteinTarget > 0 ? proteinTarget : PROTEIN_TARGET_DEFAULT;
   if (!record || !record.calories || record.calories === 0) return 'red';
-  if (record.protein && record.protein >= PROTEIN_TARGET)    return 'green';
-  if (record.calories > 0)                                    return 'amber';
+  if (record.protein && record.protein >= goal)             return 'green';
+  if (record.calories > 0)                                  return 'amber';
   return 'red';
 }
 
@@ -117,9 +120,9 @@ async function fetchAthleteData(service, client) {
   const pactByDate = {};
   (pactsR.data || []).forEach(p => { pactByDate[p.date] = p.status; });
 
-  // Build the three 7-day strips
-  const stepDays     = days.map(d => classifySteps(healthByDate[d]?.steps));
-  const nutritionDays = days.map(d => classifyNutrition(healthByDate[d]));
+  // Build the three 7-day strips — against this athlete's own targets
+  const stepDays     = days.map(d => classifySteps(healthByDate[d]?.steps, client.step_target));
+  const nutritionDays = days.map(d => classifyNutrition(healthByDate[d], client.protein_target));
   const pactDays     = days.map(d => classifyPact(pactByDate[d]));
 
   // Engagement score: % of last 7 days with at least one user message
@@ -220,37 +223,20 @@ export default async function AthletesPage() {
     <div className="px-8 lg:px-10 py-8 lg:py-10">
 
       {/* Header */}
-      <header className="flex items-center justify-between gap-6 mb-6">
-        <div>
-          <h1 className="font-display font-extrabold text-blue text-3xl lg:text-4xl uppercase tracking-tight leading-none">
-            Clients
-          </h1>
-          <p className="text-sm text-muted mt-2">
-            {total} active · {atRiskCount} at-risk · {watchCount} watch
-          </p>
-        </div>
-
-        {/* Search — visual placeholder */}
-        <div className="hidden md:block flex-1 max-w-md">
-          <input
-            type="text"
-            placeholder="Search by name, program, status..."
-            className="w-full bg-white border border-border rounded px-4 py-2.5 text-sm placeholder:text-muted focus:outline-none focus:border-blue transition-colors"
-            disabled
-          />
-        </div>
+      <header className="mb-6">
+        <h1 className="font-display font-extrabold text-blue text-3xl lg:text-4xl uppercase tracking-tight leading-none">
+          Athletes
+        </h1>
+        <p className="text-sm text-muted mt-2">
+          {total} active · {atRiskCount} at-risk · {watchCount} watch · {onTrackCount} on track
+        </p>
       </header>
 
-      {/* Filter tabs — visual only for now */}
-      <FilterTabs total={total} atRisk={atRiskCount} watch={watchCount} onTrack={onTrackCount} />
-
-      {/* Athletes grid */}
+      {/* Interactive search + filters + grid (client component) */}
       {total === 0 ? (
         <EmptyState />
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 mt-6">
-          {athletes.map(a => <AthleteCard key={a.id} athlete={a} />)}
-        </div>
+        <RosterExplorer athletes={athletes} />
       )}
     </div>
   );
@@ -259,244 +245,17 @@ export default async function AthletesPage() {
 // ============================================================
 // Components
 // ============================================================
-function FilterTabs({ total, atRisk, watch, onTrack }) {
-  return (
-    <div className="flex gap-2 flex-wrap mt-5">
-      <Tab label="All"     count={total}    active />
-      <Tab label="On track" count={onTrack} />
-      <Tab label="Watch"   count={watch} />
-      <Tab label="At risk" count={atRisk}  warn={atRisk > 0} />
-    </div>
-  );
-}
-
-function Tab({ label, count, active, warn }) {
-  return (
-    <button
-      className={`px-3.5 py-2 rounded text-[11px] font-bold tracking-wider uppercase border transition-colors ${
-        active
-          ? 'bg-blue text-white border-blue'
-          : warn
-            ? 'bg-white text-red border-red/30 hover:border-red'
-            : 'bg-white text-muted border-border hover:text-blue hover:border-blue'
-      }`}
-    >
-      {label} <span className={`ml-1 ${active ? 'text-white/70' : 'text-muted'}`}>{count}</span>
-    </button>
-  );
-}
-
-function AthleteCard({ athlete: a }) {
-  const accentClass = a.isAtRisk ? 'border-t-warn' : 'border-t-blue';
-  const initialsBg  = a.isAtRisk ? 'bg-warn-light text-warn-dark' : 'bg-bg-alt text-blue';
-
-  return (
-    <Link
-      href={`/dashboard/clients/${a.id}`}
-      className={`block bg-white rounded-lg shadow-card border border-border border-t-4 ${accentClass} hover:shadow-card-hover transition-all`}
-    >
-      <div className="p-5 space-y-4">
-
-        {/* Header: avatar + name + goal + engagement score */}
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className={`w-10 h-10 rounded grid place-items-center font-display font-bold text-sm flex-shrink-0 ${initialsBg}`}>
-              {initials(a.name)}
-            </div>
-            <div className="min-w-0">
-              <div className="font-display font-bold text-blue text-sm truncate">
-                {a.name}
-              </div>
-              <div className="text-[11px] text-muted truncate">
-                {(a.goal || 'no goal').replace(/_/g, ' ')}
-              </div>
-            </div>
-          </div>
-          <EngagementScore score={a.engagement} />
-        </div>
-
-        {/* Programme strip — current training programme */}
-        <ProgrammeStrip programme={a.currentProgramme} />
-
-        {/* 7-day RAG strips */}
-        <div className="space-y-2">
-          <RAGStrip label="STEPS"     days={a.stepDays} />
-          <RAGStrip label="NUTRITION" days={a.nutritionDays} />
-          <RAGStrip label="PACTS"     days={a.pactDays} />
-        </div>
-
-        {/* Trend + risk */}
-        <div className="flex gap-2">
-          <TrendBadge trend={a.trend} />
-          <RiskBadge  risk={a.risk} />
-        </div>
-
-        {/* Weight progress */}
-        <ProgressBar
-          lost={a.lost}
-          toGo={a.toGo}
-          start={a.start_weight}
-          target={a.target_weight}
-        />
-      </div>
-    </Link>
-  );
-}
-
-function ProgrammeStrip({ programme }) {
-  if (!programme) {
-    return (
-      <div className="flex items-center justify-between gap-2 py-2 px-3 bg-bg/60 rounded border border-dashed border-border">
-        <div className="text-[10px] font-bold tracking-[0.18em] uppercase text-muted">
-          No programme
-        </div>
-        <span className="text-[9px] font-semibold tracking-wider uppercase text-red">
-          + Build one
-        </span>
-      </div>
-    );
-  }
-
-  const isActive = programme.status === 'active';
-  const accentColor = isActive ? 'border-l-emerald-500' : 'border-l-red';
-
-  return (
-    <div className={`flex items-center justify-between gap-2 py-2 px-3 bg-bg/60 rounded border-l-2 ${accentColor}`}>
-      <div className="min-w-0 flex-1">
-        <div className="text-[9px] font-bold tracking-[0.18em] uppercase text-muted leading-none mb-1">
-          On programme
-        </div>
-        <div className="text-xs font-semibold text-blue truncate leading-tight">
-          {programme.name}
-          {programme.weeks ? (
-            <span className="text-muted font-normal ml-1.5">· {programme.weeks}wk</span>
-          ) : null}
-        </div>
-      </div>
-      <span className={`text-[8px] font-bold tracking-[0.15em] uppercase px-1.5 py-1 rounded flex-shrink-0 border ${
-        isActive ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
-                   'bg-white text-blue border-border'
-      }`}>
-        {programme.status}
-      </span>
-    </div>
-  );
-}
-
-function EngagementScore({ score }) {
-  const isLow = score < 50;
-  const ringColor = isLow ? 'border-warn text-warn-dark' : 'border-blue text-blue';
-  return (
-    <div className="flex flex-col items-end flex-shrink-0">
-      <div className={`w-11 h-11 rounded-full border-2 ${ringColor} grid place-items-center font-display font-bold text-sm tabular-nums`}>
-        {score}
-      </div>
-      <div className="text-[8px] font-bold text-muted tracking-widest uppercase mt-1">
-        Engagement
-      </div>
-    </div>
-  );
-}
-
-function RAGStrip({ label, days }) {
-  return (
-    <div className="flex items-center gap-3">
-      <div className="text-[9px] font-bold text-muted tracking-[0.12em] uppercase w-[68px] flex-shrink-0">
-        {label}
-      </div>
-      <div className="flex-1 grid grid-cols-7 gap-1">
-        {days.map((status, i) => (
-          <div
-            key={i}
-            className={`h-2.5 rounded-sm transition-opacity ${
-              status === 'green' ? 'bg-emerald-500' :
-              status === 'amber' ? 'bg-warn'        :
-              status === 'red'   ? 'bg-red'         :
-                                   'bg-bg-alt'
-            }`}
-            title={`Day ${i - 6}: ${status}`}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function TrendBadge({ trend }) {
-  const map = {
-    declining: { arrow: '↓', label: 'Declining', cls: 'bg-red/10 text-red border-red/30' },
-    building:  { arrow: '↑', label: 'Building',  cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
-    steady:    { arrow: '→', label: 'Steady',    cls: 'bg-bg text-muted border-border' },
-  };
-  const m = map[trend] || map.steady;
-  return (
-    <span className={`text-[10px] font-semibold uppercase tracking-wider px-2 py-1 rounded border inline-flex items-center gap-1 ${m.cls}`}>
-      <span>{m.arrow}</span> {m.label}
-    </span>
-  );
-}
-
-function RiskBadge({ risk }) {
-  const map = {
-    high:   { icon: '⚠', label: 'High risk', cls: 'bg-red/10 text-red border-red/30' },
-    medium: { icon: '○', label: 'Watch',     cls: 'bg-warn-light text-warn-dark border-warn/30' },
-    low:    { icon: '✓', label: 'On track',  cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
-  };
-  const m = map[risk] || map.low;
-  return (
-    <span className={`text-[10px] font-semibold uppercase tracking-wider px-2 py-1 rounded border inline-flex items-center gap-1 ${m.cls}`}>
-      <span>{m.icon}</span> {m.label}
-    </span>
-  );
-}
-
-function ProgressBar({ lost, toGo, start, target }) {
-  if (lost == null || start == null || target == null) {
-    return <div className="text-[11px] text-muted pt-1">No weight goal set</div>;
-  }
-
-  const totalRange = start - target;
-  const pct = totalRange !== 0
-    ? Math.max(0, Math.min(100, (lost / totalRange) * 100))
-    : 0;
-
-  const lostLabel = lost > 0 ? `${lost.toFixed(1)}kg lost`
-                  : lost < 0 ? `${Math.abs(lost).toFixed(1)}kg gained`
-                             : 'No change';
-
-  const toGoLabel = toGo > 0 ? `${toGo.toFixed(1)}kg to go`
-                  : toGo < 0 ? `Past target by ${Math.abs(toGo).toFixed(1)}kg`
-                             : 'At target';
-
-  const barColor = pct < 30 ? 'bg-warn' : 'bg-blue';
-
-  return (
-    <div className="pt-1">
-      <div className="w-full h-1.5 bg-bg rounded-full overflow-hidden mb-2">
-        <div
-          className={`h-full ${barColor} transition-all`}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-      <div className="flex justify-between text-[11px] text-muted tabular-nums">
-        <span>{lostLabel}</span>
-        <span>{toGoLabel}</span>
-      </div>
-    </div>
-  );
-}
-
 function EmptyState() {
   return (
     <div className="bg-white rounded-lg shadow-card border border-border p-12 text-center mt-6">
       <p className="text-[11px] font-semibold tracking-[0.2em] uppercase text-red mb-3">
-        No clients yet
+        No athletes yet
       </p>
       <h3 className="font-display font-extrabold text-blue text-2xl uppercase tracking-tight mb-3">
         Empty roster
       </h3>
       <p className="text-body text-sm leading-relaxed max-w-md mx-auto">
-        Invite your first client to get started, or run the backfill SQL to link existing rows.
+        Invite your first athlete to get started — the Invite athlete page builds their onboarding link.
       </p>
     </div>
   );

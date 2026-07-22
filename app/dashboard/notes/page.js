@@ -12,7 +12,6 @@ export default function NotesPage() {
   const [body, setBody] = useState('');
   const [urgent, setUrgent] = useState(false);
   const [state, setState] = useState('idle');
-  const [lastRelay, setLastRelay] = useState(null); // true | false | null
 
   useEffect(() => {
     fetch('/api/notes').then((r) => r.json()).then((d) => {
@@ -38,27 +37,15 @@ export default function NotesPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ clientId, body, urgent }),
     });
-    const d = await res.json().catch(() => ({}));
     setState('idle');
-    if (res.ok) {
-      setBody(''); setUrgent(false); loadNotes(clientId);
-      setLastRelay(d.relayed === true);
-    }
+    if (res.ok) { setBody(''); setUrgent(false); loadNotes(clientId); }
   }
 
   return (
     <div className="p-8 max-w-3xl">
       <p className="text-xs font-semibold text-red tracking-[0.2em] uppercase mb-1">Between sessions</p>
-      <h1 className="font-display font-extrabold text-blue text-3xl uppercase tracking-tight mb-1">Client notes</h1>
-      <p className="text-body text-sm mb-8">Short and human — these land on the athlete&apos;s dashboard as &quot;Notes from your coach&quot;, and PAX passes them on over WhatsApp.</p>
-
-      {lastRelay !== null && (
-        <div className={`rounded px-4 py-3 text-sm mb-6 ${lastRelay ? 'bg-emerald-50 border border-emerald-200 text-emerald-700' : 'bg-bg border border-border text-body'}`}>
-          {lastRelay
-            ? 'Note saved — PAX is delivering it on WhatsApp.'
-            : 'Note saved to the athlete’s dashboard. WhatsApp delivery didn’t go through — PAX will still have it in context.'}
-        </div>
-      )}
+      <h1 className="font-display font-extrabold text-blue text-3xl uppercase tracking-tight mb-1">Athlete notes</h1>
+      <p className="text-body text-sm mb-8">Short and human — these land on the athlete&apos;s dashboard as &quot;Notes from your coach&quot;.</p>
 
       <form onSubmit={send} className="bg-white rounded-lg shadow-card p-6 mb-8">
         <label className="block text-[10px] font-bold tracking-[0.15em] uppercase text-blue mb-2">Athlete</label>

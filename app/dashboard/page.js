@@ -418,7 +418,7 @@ function QuickActions() {
     { href: '/dashboard/briefs',   label: "Today's briefs" },
     { href: '/dashboard/reports',  label: 'PAX reports' },
     { href: '/dashboard/athletes', label: 'All athletes' },
-    { href: '/dashboard/programs', label: 'Build a program' },
+    { href: '/dashboard/programs', label: 'Build a programme' },
     { href: '/dashboard/invite',   label: 'Invite athlete' },
   ];
   return (

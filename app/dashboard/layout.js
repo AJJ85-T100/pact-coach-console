@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { createClient, createServiceClient } from '@/lib/supabase/server';
 import SignOutButton from '@/components/SignOutButton';
 import SidebarNavItem from '@/components/SidebarNavItem';
+import SidebarShell from '@/components/SidebarShell';
 
 export default async function DashboardLayout({ children }) {
   // Belt-and-braces: middleware bounces unauthenticated, but server components
@@ -28,11 +29,8 @@ export default async function DashboardLayout({ children }) {
   const totalClients = clients?.length || 0;
   const atRiskCount  = (clients || []).filter(c => c.status === 'at_risk').length;
 
-  return (
-    <div className="flex min-h-screen bg-bg">
-
-      {/* Sidebar */}
-      <aside className="w-64 bg-blue text-white flex flex-col flex-shrink-0 sticky top-0 h-screen">
+  const sidebar = (
+      <aside className="w-64 bg-blue text-white flex flex-col h-full">
 
         {/* Brand */}
         <div className="px-6 py-5 border-b border-white/10">
@@ -100,11 +98,11 @@ export default async function DashboardLayout({ children }) {
           <SignOutButton />
         </div>
       </aside>
+  );
 
-      {/* Main content */}
-      <main className="flex-1 min-w-0">
-        {children}
-      </main>
-    </div>
+  return (
+    <SidebarShell sidebar={sidebar}>
+      {children}
+    </SidebarShell>
   );
 }
