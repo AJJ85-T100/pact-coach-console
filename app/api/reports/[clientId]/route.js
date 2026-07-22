@@ -18,6 +18,8 @@ import { supabaseAdmin as supabase } from '@/lib/supabase/admin';
 import { requireClientAccess } from '@/lib/auth/requireClientAccess';
 
 export const dynamic = 'force-dynamic';
+// Report generation is an LLM call — needs more than the default fn timeout.
+export const maxDuration = 60;
 
 const MODEL = 'claude-sonnet-4-6';
 const DAY = 86400000;
@@ -148,6 +150,7 @@ Return ONLY valid JSON — no preamble, no markdown fences — matching exactly:
 }`;
 
   let aiText = '';
+  let aiError = null;
   try {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -162,28 +165,40 @@ Return ONLY valid JSON — no preamble, no markdown fences — matching exactly:
         system: systemPrompt,
         messages: [{ role: 'user', content: dataBlock }],
       }),
+      signal: AbortSignal.timeout(45000),
     });
 
     if (!res.ok) {
       const errText = await res.text();
       console.error('[report] anthropic error', res.status, errText);
-      return NextResponse.json({ error: 'Report generation failed.', detail: res.status }, { status: 502 });
+      aiError = `AI narrative unavailable (${res.status}).`;
+    } else {
+      const json = await res.json();
+      aiText = (json.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim();
     }
-    const json = await res.json();
-    aiText = (json.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim();
   } catch (err) {
     console.error('[report] anthropic call threw', err);
-    return NextResponse.json({ error: 'Report generation failed.' }, { status: 502 });
+    aiError = err.name === 'TimeoutError' ? 'AI narrative timed out.' : 'AI narrative unavailable.';
   }
 
   let report;
-  try {
-    const cleaned = aiText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
-    const start = cleaned.indexOf('{');
-    const end = cleaned.lastIndexOf('}');
-    report = JSON.parse(start >= 0 && end >= 0 ? cleaned.slice(start, end + 1) : cleaned);
-  } catch {
-    report = { headline: 'Report unavailable', momentum: 'steady', what_worked: [], what_to_watch: [], recommendation: aiText || 'Could not parse report.' };
+  if (aiError || !aiText) {
+    report = {
+      headline: 'Narrative unavailable — numbers below are live',
+      momentum: delta != null ? (delta > 5 ? 'building' : delta < -5 ? 'slipping' : 'steady') : 'steady',
+      what_worked: [],
+      what_to_watch: [],
+      recommendation: `${aiError || 'The AI write-up could not be generated.'} Retry with Redraft — the adherence stats and 8-week trend above are live data regardless.`,
+    };
+  } else {
+    try {
+      const cleaned = aiText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
+      const start = cleaned.indexOf('{');
+      const end = cleaned.lastIndexOf('}');
+      report = JSON.parse(start >= 0 && end >= 0 ? cleaned.slice(start, end + 1) : cleaned);
+    } catch {
+      report = { headline: 'Report unavailable', momentum: 'steady', what_worked: [], what_to_watch: [], recommendation: aiText || 'Could not parse report.' };
+    }
   }
 
   return NextResponse.json(
@@ -203,6 +218,7 @@ Return ONLY valid JSON — no preamble, no markdown fences — matching exactly:
       generated_at: new Date().toISOString(),
       history,
       report,
+      ai_error: aiError,
     },
     { headers: { 'Cache-Control': 'no-store, max-age=0, must-revalidate' } },
   );
