@@ -28,6 +28,25 @@ import Link from 'next/link';
 const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const dayName = (n) => DAY_NAMES[n - 1] || `Day ${n}`;
 
+// ── Load progression ─────────────────────────────────────────────
+// factor: 1.025 = +2.5%. Only plain numeric weights progress — "BW",
+// "60 each", empty, and cardio prescriptions are left untouched. The
+// result is rounded to the nearest 0.5kg so numbers stay loadable.
+function progressWeightBy(weight, factor) {
+  if (weight == null || factor === 1) return weight;
+  const m = String(weight).trim().match(/^(\d+(?:\.\d+)?)\s*(kg)?$/i);
+  if (!m) return weight;
+  const w = parseFloat(m[1]);
+  if (!w || !isFinite(w)) return weight;
+  return String(Math.round(w * factor * 2) / 2);
+}
+function progressExercises(exercises, factor) {
+  return (Array.isArray(exercises) ? exercises : []).map(({ id, ...e }) => ({
+    ...e,
+    weight: e.mode === 'cardio' ? e.weight : progressWeightBy(e.weight, factor),
+  }));
+}
+
 
 // ============================================================================
 // Exercise picker context + equipment matching
@@ -175,6 +194,7 @@ export default function ProgramEditorPage() {
             )}
             <SessionsSection
               programId={programId}
+              program={program}
               sessions={sessions}
               onChange={refresh}
             />
@@ -741,12 +761,67 @@ function StatusPill({ status }) {
 // ============================================================================
 // Sessions section
 // ============================================================================
-function SessionsSection({ programId, sessions, onChange }) {
+function SessionsSection({ programId, program, sessions, onChange }) {
   const [showAddForm, setShowAddForm] = useState(false);
 
   const nextWeek = sessions.length > 0
     ? Math.max(...sessions.map((s) => s.week_number))
     : 1;
+
+  // ── Auto-build: generate every remaining week from the last built week,
+  // compounding a weekly % onto the loads. Build week 1 → one click → block done.
+  const maxWeek = sessions.length ? Math.max(...sessions.map((s) => s.week_number)) : 0;
+  const [buildOpen, setBuildOpen] = useState(false);
+  const [buildWeeks, setBuildWeeks] = useState('');
+  const [buildPct, setBuildPct] = useState('2.5');
+  const [building, setBuilding] = useState(null); // week currently being written
+  const [buildErr, setBuildErr] = useState(null);
+
+  function openBuild() {
+    setBuildWeeks(String(program?.weeks || Math.min(52, maxWeek + 3)));
+    setBuildErr(null);
+    setBuildOpen(true);
+  }
+
+  async function autoBuild() {
+    const target = Math.min(52, parseInt(buildWeeks, 10) || 0);
+    const pct = parseFloat(buildPct) || 0;
+    const base = sessions.filter((s) => s.week_number === maxWeek);
+    if (target <= maxWeek) { setBuildErr(`Already built to week ${maxWeek} — pick a higher target.`); return; }
+    if (!base.length) { setBuildErr('No sessions in the last week to build from.'); return; }
+    if ((target - maxWeek) * base.length > 200) { setBuildErr('That would create over 200 sessions — reduce the range.'); return; }
+    setBuildErr(null);
+    try {
+      for (let w = maxWeek + 1; w <= target; w++) {
+        setBuilding(w);
+        const factor = Math.pow(1 + pct / 100, w - maxWeek); // compounds week on week
+        for (const s of base) {
+          const res = await fetch(`/api/programs/${programId}/sessions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: s.name,
+              week_number: w,
+              day_index: s.day_index,
+              notes: s.notes || null,
+              exercises: progressExercises(s.exercises, factor),
+            }),
+          });
+          if (!res.ok) {
+            const d = await res.json().catch(() => ({}));
+            throw new Error(d.error || `Week ${w} failed part-way — refresh to see what was built.`);
+          }
+        }
+      }
+      setBuildOpen(false);
+      onChange();
+    } catch (err) {
+      setBuildErr(err.message);
+      onChange(); // show whatever WAS built
+    } finally {
+      setBuilding(null);
+    }
+  }
 
   // Group sessions by week, preserving the API's (week_number, day_index) order.
   const weekOrder = [];
@@ -766,16 +841,87 @@ function SessionsSection({ programId, sessions, onChange }) {
         <h2 className="font-['Montserrat'] font-bold text-[14px] text-[#0A2540] uppercase tracking-[1px]">
           Sessions
         </h2>
-        {!showAddForm && (
-          <button
-            onClick={() => setShowAddForm(true)}
-            className="inline-flex items-center gap-2 bg-[#D92D20] hover:bg-[#B0241A] text-white font-['Inter'] font-semibold text-[12px] uppercase tracking-[0.4px] px-4 py-2.5 rounded-[6px] transition-colors"
-          >
-            <span aria-hidden="true">+</span>
-            Add session
-          </button>
-        )}
+        <div className="flex items-center gap-2 flex-wrap">
+          {maxWeek >= 1 && !buildOpen && (
+            <button
+              onClick={openBuild}
+              title="Generate all remaining weeks from the last built week, compounding a weekly % onto the loads"
+              className="inline-flex items-center gap-1.5 bg-white border border-[#0A2540] hover:bg-[#0A2540] hover:text-white text-[#0A2540] font-['Inter'] font-semibold text-[12px] uppercase tracking-[0.4px] px-4 py-2.5 rounded-[6px] transition-colors"
+            >
+              ⚡ Auto-build weeks
+            </button>
+          )}
+          {!showAddForm && (
+            <button
+              onClick={() => setShowAddForm(true)}
+              className="inline-flex items-center gap-2 bg-[#D92D20] hover:bg-[#B0241A] text-white font-['Inter'] font-semibold text-[12px] uppercase tracking-[0.4px] px-4 py-2.5 rounded-[6px] transition-colors"
+            >
+              <span aria-hidden="true">+</span>
+              Add session
+            </button>
+          )}
+        </div>
       </div>
+
+      {buildOpen && (
+        <div className="bg-white border border-[#0A2540] rounded-[6px] p-5 mb-4">
+          <h3 className="font-['Montserrat'] font-bold text-[12px] text-[#0A2540] uppercase tracking-[1px] mb-1">
+            ⚡ Auto-build the block
+          </h3>
+          <p className="font-['Inter'] text-[12px] text-[#4A4A4A] mb-4 max-w-2xl">
+            Takes week {maxWeek} and generates every week up to your target, adding the weekly % to each
+            load (compounding, rounded to 0.5kg). Bodyweight, cardio and text loads are left untouched —
+            and you can still edit any week afterwards.
+          </p>
+          <div className="flex items-end gap-4 flex-wrap">
+            <label className="block">
+              <span className="block font-['Inter'] text-[10px] font-bold uppercase tracking-[1.5px] text-[#8A95A3] mb-1">Build up to week</span>
+              <input
+                value={buildWeeks}
+                onChange={(e) => setBuildWeeks(e.target.value)}
+                inputMode="numeric"
+                className="w-24 bg-[#F4F6F8] border border-[#E2E6EB] rounded-[4px] px-3 py-2 text-sm text-[#0A2540] font-['Inter'] tabular-nums focus:outline-none focus:border-[#0A2540]"
+              />
+            </label>
+            <label className="block">
+              <span className="block font-['Inter'] text-[10px] font-bold uppercase tracking-[1.5px] text-[#8A95A3] mb-1">Progress per week</span>
+              <span className="flex items-center gap-1.5">
+                <input
+                  value={buildPct}
+                  onChange={(e) => setBuildPct(e.target.value)}
+                  inputMode="decimal"
+                  className="w-20 bg-[#F4F6F8] border border-[#E2E6EB] rounded-[4px] px-3 py-2 text-sm text-[#0A2540] font-['Inter'] tabular-nums focus:outline-none focus:border-[#0A2540]"
+                />
+                <span className="font-['Inter'] text-sm text-[#8A95A3]">%</span>
+              </span>
+            </label>
+            <button
+              onClick={autoBuild}
+              disabled={building != null}
+              className="inline-flex items-center gap-2 bg-[#D92D20] hover:bg-[#B0241A] disabled:opacity-40 text-white font-['Inter'] font-semibold text-[12px] uppercase tracking-[0.4px] px-4 py-2.5 rounded-[6px] transition-colors"
+            >
+              {building != null ? `Building week ${building}…` : `Build weeks ${maxWeek + 1}–${Math.min(52, parseInt(buildWeeks, 10) || maxWeek + 1)}`}
+            </button>
+            <button
+              onClick={() => setBuildOpen(false)}
+              disabled={building != null}
+              className="font-['Inter'] font-semibold text-[12px] text-[#0A2540] hover:text-[#D92D20] uppercase tracking-[0.4px] px-2 py-2.5 disabled:opacity-40 transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+          {(parseFloat(buildPct) || 0) > 0 && (parseInt(buildWeeks, 10) || 0) > maxWeek && (
+            <p className="font-['Inter'] text-[11px] text-[#8A95A3] mt-3">
+              Example: 100kg in week {maxWeek} → {progressWeightBy('100', Math.pow(1 + (parseFloat(buildPct) || 0) / 100, 1))}kg
+              in week {maxWeek + 1} → {progressWeightBy('100', Math.pow(1 + (parseFloat(buildPct) || 0) / 100, (parseInt(buildWeeks, 10) || maxWeek + 1) - maxWeek))}kg
+              by week {Math.min(52, parseInt(buildWeeks, 10) || maxWeek + 1)}.
+            </p>
+          )}
+          {buildErr && (
+            <p className="font-['Inter'] text-[12px] text-[#D92D20] mt-3">{buildErr}</p>
+          )}
+        </div>
+      )}
 
       {showAddForm && (
         <SessionForm
@@ -822,14 +968,17 @@ function WeekGroup({ weekNumber, sessions, onChange }) {
   const [saving, setSaving] = useState(false);
   const [copying, setCopying] = useState(false);
   const [copyError, setCopyError] = useState(null);
+  const [copyOpen, setCopyOpen] = useState(false);
+  const [copyPct, setCopyPct] = useState('2.5');
 
-  // Copy every session in this week into week N+1 — exercises included.
-  // The single biggest time-saver in real programming: build week 1, copy it
-  // forward, then adjust loads.
-  async function copyWeekForward() {
+  // Copy every session in this week into week N+1 — exercises included, with
+  // an optional % load progression (0 = exact copy). Build week 1, progress
+  // it forward, done.
+  async function copyWeekForward(pct = 0) {
     if (copying || sessions.length === 0) return;
     setCopying(true);
     setCopyError(null);
+    const factor = 1 + (parseFloat(pct) || 0) / 100;
     try {
       for (const s of sessions) {
         const res = await fetch(`/api/programs/${s.program_id}/sessions`, {
@@ -840,8 +989,9 @@ function WeekGroup({ weekNumber, sessions, onChange }) {
             week_number: weekNumber + 1,
             day_index: s.day_index,
             notes: s.notes || null,
-            // Strip ids so the server issues fresh ones for the copies.
-            exercises: (Array.isArray(s.exercises) ? s.exercises : []).map(({ id, ...rest }) => rest),
+            // progressExercises strips ids (server issues fresh ones) and
+            // leaves BW/cardio/non-numeric loads untouched.
+            exercises: progressExercises(s.exercises, factor),
           }),
         });
         if (!res.ok) {
@@ -849,6 +999,7 @@ function WeekGroup({ weekNumber, sessions, onChange }) {
           throw new Error(d.error || 'Could not copy a session.');
         }
       }
+      setCopyOpen(false);
       onChange();
     } catch (err) {
       setCopyError(err.message);
@@ -928,14 +1079,39 @@ function WeekGroup({ weekNumber, sessions, onChange }) {
         {copyError && (
           <span className="font-['Inter'] text-[10px] text-[#D92D20] uppercase tracking-[1px]">{copyError}</span>
         )}
-        <button
-          onClick={copyWeekForward}
-          disabled={copying}
-          title={`Copy every week ${weekNumber} session (exercises included) into week ${weekNumber + 1}`}
-          className="font-['Inter'] font-semibold text-[10px] text-[#0A2540] hover:text-[#D92D20] disabled:opacity-40 uppercase tracking-[1px] transition-colors"
-        >
-          {copying ? 'Copying…' : `Copy to week ${weekNumber + 1} →`}
-        </button>
+        {copyOpen ? (
+          <span className="flex items-center gap-1.5">
+            <span className="font-['Inter'] text-[10px] text-[#8A95A3] uppercase tracking-[1px]">+</span>
+            <input
+              value={copyPct}
+              onChange={(e) => setCopyPct(e.target.value)}
+              inputMode="decimal"
+              className="w-12 bg-white border border-[#E2E6EB] rounded-[3px] px-1.5 py-0.5 text-[11px] text-[#0A2540] font-['Inter'] tabular-nums text-center focus:outline-none focus:border-[#0A2540]"
+            />
+            <span className="font-['Inter'] text-[10px] text-[#8A95A3] uppercase tracking-[1px]">% load</span>
+            <button
+              onClick={() => copyWeekForward(copyPct)}
+              disabled={copying}
+              className="font-['Inter'] font-bold text-[10px] text-white bg-[#D92D20] hover:bg-[#B0241A] disabled:opacity-40 uppercase tracking-[1px] px-2 py-1 rounded-[3px] transition-colors"
+            >
+              {copying ? 'Copying…' : `Copy → wk ${weekNumber + 1}`}
+            </button>
+            <button
+              onClick={() => setCopyOpen(false)}
+              disabled={copying}
+              className="font-['Inter'] text-[11px] text-[#8A95A3] hover:text-[#0A2540] px-1"
+              title="Cancel"
+            >×</button>
+          </span>
+        ) : (
+          <button
+            onClick={() => setCopyOpen(true)}
+            title={`Copy every week ${weekNumber} session into week ${weekNumber + 1}, with optional % load progression`}
+            className="font-['Inter'] font-semibold text-[10px] text-[#0A2540] hover:text-[#D92D20] uppercase tracking-[1px] transition-colors"
+          >
+            Copy to week {weekNumber + 1} →
+          </button>
+        )}
         {saving
           ? <span className="font-['Inter'] text-[10px] text-[#8A95A3] uppercase tracking-[1.5px]">Saving order…</span>
           : canReorder
@@ -1007,6 +1183,47 @@ function SessionCard({ session, onChange }) {
   const [showAddExercise, setShowAddExercise] = useState(false);
   const exercises = Array.isArray(session.exercises) ? session.exercises : [];
 
+  // ── Exercise reordering: drag anywhere on a row, or use the ▲▼ arrows.
+  // Order is just the JSONB array order — reorder + PATCH the whole array.
+  const [exDrag, setExDrag] = useState(null);
+  const [exOver, setExOver] = useState(null);
+  const [savingOrder, setSavingOrder] = useState(false);
+
+  async function persistOrder(next) {
+    setSavingOrder(true);
+    try {
+      const res = await fetch(`/api/program-sessions/${session.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ exercises: next }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || 'Could not save the new order.');
+      }
+      onChange();
+    } catch (err) {
+      alert(`Couldn't reorder: ${err.message}`);
+    } finally {
+      setSavingOrder(false);
+    }
+  }
+
+  function moveExercise(from, to) {
+    if (to < 0 || to >= exercises.length || from === to || savingOrder) return;
+    const next = [...exercises];
+    const [m] = next.splice(from, 1);
+    next.splice(to, 0, m);
+    persistOrder(next);
+  }
+
+  function dropExercise(target) {
+    if (exDrag == null || exDrag === target) { setExDrag(null); setExOver(null); return; }
+    const from = exDrag;
+    setExDrag(null); setExOver(null);
+    moveExercise(from, target);
+  }
+
   if (mode === 'edit') {
     return (
       <div className="bg-white border border-[#0A2540] rounded-[6px] overflow-hidden">
@@ -1051,14 +1268,35 @@ function SessionCard({ session, onChange }) {
               <div className="col-span-1 text-center">Rest</div>
               <div className="col-span-1"></div>
             </div>
-            {exercises.map((ex) => (
-              <ExerciseRow
+            {exercises.map((ex, i) => (
+              <div
                 key={ex.id}
-                exercise={ex}
-                session={session}
-                onChange={onChange}
-              />
+                draggable={!savingOrder}
+                onDragStart={(e) => { setExDrag(i); e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', String(i)); } catch {} }}
+                onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (i !== exOver) setExOver(i); }}
+                onDrop={(e) => { e.preventDefault(); dropExercise(i); }}
+                onDragEnd={() => { setExDrag(null); setExOver(null); }}
+                title="Drag to reorder"
+                className={`rounded-[3px] transition-all cursor-grab active:cursor-grabbing ${
+                  exDrag === i ? 'opacity-40' : ''
+                } ${
+                  exOver === i && exDrag != null && exDrag !== i ? 'ring-2 ring-[#D92D20] ring-offset-1' : ''
+                }`}
+              >
+                <ExerciseRow
+                  exercise={ex}
+                  session={session}
+                  onChange={onChange}
+                  index={i}
+                  count={exercises.length}
+                  onMove={moveExercise}
+                  busy={savingOrder}
+                />
+              </div>
             ))}
+            {savingOrder && (
+              <p className="font-['Inter'] text-[10px] text-[#8A95A3] uppercase tracking-[1.5px] px-2 pt-1">Saving order…</p>
+            )}
           </div>
         )}
 
@@ -1327,7 +1565,7 @@ function SessionForm({ mode, programId, session, defaultWeek, onCancel, onDone }
 // ============================================================================
 // Exercise row — display + edit/delete state machine per exercise
 // ============================================================================
-function ExerciseRow({ exercise, session, onChange }) {
+function ExerciseRow({ exercise, session, onChange, index = 0, count = 1, onMove, busy = false }) {
   const [mode, setMode] = useState('view');  // view | edit
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -1416,6 +1654,22 @@ function ExerciseRow({ exercise, session, onChange }) {
           </>
         ) : (
           <>
+            {onMove && count > 1 && (
+              <span className="hidden group-hover:flex items-center">
+                <button
+                  onClick={() => onMove(index, index - 1)}
+                  disabled={busy || index === 0}
+                  title="Move up"
+                  className="px-0.5 text-[11px] leading-none text-[#8A95A3] hover:text-[#0A2540] disabled:opacity-25"
+                >▲</button>
+                <button
+                  onClick={() => onMove(index, index + 1)}
+                  disabled={busy || index === count - 1}
+                  title="Move down"
+                  className="px-0.5 text-[11px] leading-none text-[#8A95A3] hover:text-[#0A2540] disabled:opacity-25"
+                >▼</button>
+              </span>
+            )}
             <IconButton onClick={() => setMode('edit')} title="Edit exercise" variant="gray">
               <EditIcon />
             </IconButton>
