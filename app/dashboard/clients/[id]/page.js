@@ -4,6 +4,7 @@ import { createClient, createServiceClient } from '@/lib/supabase/server';
 import PactsPanel from '@/components/PactsPanel';
 import DangerZone from '@/components/DangerZone';
 import NudgeTool from '@/components/NudgeTool';
+import AthleteQuickActions from '@/components/AthleteQuickActions';
 
 // ============================================================
 // Helpers
@@ -322,6 +323,16 @@ export default async function ClientDetailPage({ params }) {
             View all programmes · {programmes.length}
           </Link>
         )}
+        <AthleteQuickActions
+          clientId={client.id}
+          targets={{
+            calories: client.calorie_target,
+            protein:  client.protein_target,
+            carbs:    client.carb_target,
+            fat:      client.fat_target,
+            steps:    client.step_target,
+          }}
+        />
       </div>
 
       {/* Main grid: data on left, conversation on right */}

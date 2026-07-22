@@ -152,8 +152,11 @@ export async function POST(request) {
       target_date: isoDate(f.event_date),
       whatsapp_phone: waRaw,
       wa_phone: waDigits,
-      channel: waDigits ? 'whatsapp' : 'telegram',
-      whatsapp_invited_at: new Date().toISOString(),
+      // Always 'whatsapp' — it's the platform's only live channel. A client
+      // with no number yet just has wa_phone null until one is added; stamping
+      // 'telegram' here would silently exclude them from every scheduled send.
+      channel: 'whatsapp',
+      whatsapp_invited_at: waDigits ? new Date().toISOString() : null,
       status: 'active',
       onboarding_complete: true,
     };

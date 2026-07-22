@@ -116,6 +116,12 @@ function sanitizeExercises(exercises) {
       return {
         id: typeof e.id === 'string' && e.id ? e.id : `ex-${Date.now()}-${i}`,
         name: e.name.trim(),
+        // Cardio prescription (assault bike, rower, treadmill…): time, calories
+        // and/or target heart rate instead of sets × reps × weight.
+        mode: e.mode === 'cardio' ? 'cardio' : null,
+        time_min:    toIntOrNull(e.time_min, 1, 600),
+        target_cals: toIntOrNull(e.target_cals, 1, 5000),
+        target_hr:   toIntOrNull(e.target_hr, 60, 220),
         sets,
         reps_min: repsMin,
         reps_max: repsMax,
@@ -124,6 +130,8 @@ function sanitizeExercises(exercises) {
         rest_seconds: restSecs,
         tempo: typeof e.tempo === 'string' ? e.tempo.trim() || null : null,
         notes: typeof e.notes === 'string' ? e.notes.trim() || null : null,
+        video_url: typeof e.video_url === 'string' && /^https?:\/\//.test(e.video_url.trim())
+          ? e.video_url.trim().slice(0, 500) : null,
         equipment_needed: Array.isArray(e.equipment_needed)
           ? e.equipment_needed.filter((x) => typeof x === 'string').map((x) => x.trim()).filter(Boolean)
           : [],

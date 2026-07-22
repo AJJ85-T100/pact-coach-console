@@ -1112,9 +1112,14 @@ function ExerciseRow({ exercise, session, onChange }) {
     );
   }
 
-  const reps = exercise.reps_min && exercise.reps_max
-    ? (exercise.reps_min === exercise.reps_max ? exercise.reps_min : `${exercise.reps_min}–${exercise.reps_max}`)
-    : (exercise.reps_min || exercise.reps_max || '—');
+  const reps = exercise.mode === 'cardio'
+    ? ([exercise.time_min ? `${exercise.time_min} min` : null,
+        exercise.target_cals ? `${exercise.target_cals} kcal` : null,
+        exercise.target_hr ? `@ ${exercise.target_hr} bpm` : null]
+        .filter(Boolean).join(' · ') || 'cardio')
+    : (exercise.reps_min && exercise.reps_max
+      ? (exercise.reps_min === exercise.reps_max ? exercise.reps_min : `${exercise.reps_min}–${exercise.reps_max}`)
+      : (exercise.reps_min || exercise.reps_max || '—'));
 
   return (
     <div className="grid grid-cols-12 gap-2 px-2 py-2 items-center font-['Inter'] text-[13px] text-[#0A2540] rounded-[3px] hover:bg-[#F4F6F8] transition-colors group">
@@ -1164,6 +1169,8 @@ function ExerciseRow({ exercise, session, onChange }) {
 // ============================================================================
 // Exercise form — handles both add and edit modes
 // ============================================================================
+const CARDIO_NAME_RE = /bike|row(er)?\b|erg\b|ski\b|tread|run\b|sprint|assault|airdyne|ellip|stair|cardio|swim/i;
+
 function ExerciseForm({ mode, session, exercise, onCancel, onDone }) {
   const isEdit = mode === 'edit';
   const [name, setName]       = useState(isEdit ? exercise.name : '');
@@ -1175,6 +1182,11 @@ function ExerciseForm({ mode, session, exercise, onCancel, onDone }) {
   const [rest, setRest]       = useState(isEdit && exercise.rest_seconds != null ? String(exercise.rest_seconds) : '');
   const [tempo, setTempo]     = useState(isEdit ? (exercise.tempo || '') : '');
   const [notes, setNotes]     = useState(isEdit ? (exercise.notes || '') : '');
+  const [exMode, setExMode]   = useState(isEdit && exercise.mode === 'cardio' ? 'cardio' : 'strength');
+  const [timeMin, setTimeMin] = useState(isEdit && exercise.time_min    != null ? String(exercise.time_min)    : '');
+  const [cals, setCals]       = useState(isEdit && exercise.target_cals != null ? String(exercise.target_cals) : '');
+  const [hr, setHr]           = useState(isEdit && exercise.target_hr   != null ? String(exercise.target_hr)   : '');
+  const [videoUrl, setVideoUrl] = useState(isEdit ? (exercise.video_url || '') : '');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
 
@@ -1191,6 +1203,7 @@ function ExerciseForm({ mode, session, exercise, onCancel, onDone }) {
   // Pick a library exercise: fills name + its equipment, clears any prior override.
   function selectFromLibrary(ex) {
     setName(ex.name);
+    if (CARDIO_NAME_RE.test(ex.name)) setExMode('cardio');
     setEquipmentNeeded(Array.isArray(ex.equipment) ? ex.equipment : []);
     setOverrideEquip(false);
     setError(null);
@@ -1223,17 +1236,23 @@ function ExerciseForm({ mode, session, exercise, onCancel, onDone }) {
     setSubmitting(true);
     setError(null);
     try {
+      const isCardio = exMode === 'cardio';
       const updatedExercise = {
         id: isEdit ? exercise.id : `ex-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         name: name.trim(),
-        sets:         sets    ? parseInt(sets, 10)    : null,
-        reps_min:     repsMin ? parseInt(repsMin, 10) : null,
-        reps_max:     repsMax ? parseInt(repsMax, 10) : null,
-        weight:       weight.trim() || null,
-        rpe:          rpe     ? parseFloat(rpe)       : null,
+        mode:        isCardio ? 'cardio' : null,
+        time_min:    isCardio && timeMin ? parseInt(timeMin, 10) : null,
+        target_cals: isCardio && cals    ? parseInt(cals, 10)    : null,
+        target_hr:   isCardio && hr      ? parseInt(hr, 10)      : null,
+        sets:         !isCardio && sets    ? parseInt(sets, 10)    : null,
+        reps_min:     !isCardio && repsMin ? parseInt(repsMin, 10) : null,
+        reps_max:     !isCardio && repsMax ? parseInt(repsMax, 10) : null,
+        weight:       !isCardio ? (weight.trim() || null) : null,
+        rpe:          !isCardio && rpe     ? parseFloat(rpe)       : null,
         rest_seconds: rest    ? parseInt(rest, 10)    : null,
-        tempo:        tempo.trim() || null,
+        tempo:        !isCardio ? (tempo.trim() || null) : null,
         notes:        notes.trim() || null,
+        video_url:    videoUrl.trim() || null,
         equipment_needed: equipmentNeeded,
       };
 
@@ -1319,6 +1338,44 @@ function ExerciseForm({ mode, session, exercise, onCancel, onDone }) {
         )}
       </div>
 
+      {/* Strength / Cardio prescription toggle */}
+      <div className="flex gap-1 mt-3">
+        {['strength', 'cardio'].map((m) => (
+          <button key={m} type="button" onClick={() => setExMode(m)}
+            className={`px-3 py-1.5 rounded-[4px] text-[10px] font-['Inter'] font-bold uppercase tracking-[0.8px] transition-colors ${
+              exMode === m ? 'bg-[#0A2540] text-white' : 'bg-white border border-[#E2E6EB] text-[#0A2540]'
+            }`}>
+            {m === 'strength' ? 'Sets × reps' : 'Cardio · time / kcal / HR'}
+          </button>
+        ))}
+      </div>
+
+      {exMode === 'cardio' && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3">
+          <FormField label="Time (min)">
+            <input type="number" min="1" max="600" value={timeMin} onChange={(e) => setTimeMin(e.target.value)}
+              placeholder="12"
+              className="w-full bg-white border border-[#E2E6EB] rounded-[4px] px-2 py-2 text-sm text-[#0A2540] font-['Inter'] tabular-nums focus:outline-none focus:border-[#0A2540] transition-colors" />
+          </FormField>
+          <FormField label="Calories">
+            <input type="number" min="1" max="5000" value={cals} onChange={(e) => setCals(e.target.value)}
+              placeholder="150"
+              className="w-full bg-white border border-[#E2E6EB] rounded-[4px] px-2 py-2 text-sm text-[#0A2540] font-['Inter'] tabular-nums focus:outline-none focus:border-[#0A2540] transition-colors" />
+          </FormField>
+          <FormField label="Target HR (bpm)">
+            <input type="number" min="60" max="220" value={hr} onChange={(e) => setHr(e.target.value)}
+              placeholder="145"
+              className="w-full bg-white border border-[#E2E6EB] rounded-[4px] px-2 py-2 text-sm text-[#0A2540] font-['Inter'] tabular-nums focus:outline-none focus:border-[#0A2540] transition-colors" />
+          </FormField>
+          <FormField label="Rest (s)">
+            <input type="number" min="0" max="1800" value={rest} onChange={(e) => setRest(e.target.value)}
+              placeholder="60"
+              className="w-full bg-white border border-[#E2E6EB] rounded-[4px] px-2 py-2 text-sm text-[#0A2540] font-['Inter'] tabular-nums focus:outline-none focus:border-[#0A2540] transition-colors" />
+          </FormField>
+        </div>
+      )}
+
+      {exMode === 'strength' && (
       <div className="grid grid-cols-2 sm:grid-cols-6 gap-2 mt-3">
         <FormField label="Sets">
           <input
@@ -1369,8 +1426,21 @@ function ExerciseForm({ mode, session, exercise, onCancel, onDone }) {
           />
         </FormField>
       </div>
+      )}
+
+      <div className="mt-3">
+        <FormField label="Demo video URL (YouTube or MP4 — plays in the athlete's logger)">
+          <input
+            type="url"
+            value={videoUrl} onChange={(e) => setVideoUrl(e.target.value)}
+            placeholder="https://youtube.com/watch?v=…"
+            className="w-full bg-white border border-[#E2E6EB] rounded-[4px] px-2 py-2 text-sm text-[#0A2540] font-['Inter'] focus:outline-none focus:border-[#0A2540] transition-colors"
+          />
+        </FormField>
+      </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-3">
+        {exMode === 'strength' && (
         <FormField label="Tempo">
           <input
             type="text"
@@ -1379,6 +1449,7 @@ function ExerciseForm({ mode, session, exercise, onCancel, onDone }) {
             className="w-full bg-white border border-[#E2E6EB] rounded-[4px] px-2 py-2 text-sm text-[#0A2540] font-['Inter'] focus:outline-none focus:border-[#0A2540] transition-colors"
           />
         </FormField>
+        )}
         <div className="sm:col-span-2">
           <FormField label="Notes">
             <input

@@ -57,13 +57,19 @@ export async function POST(req) {
     authUserId = link?.user?.id || null;
   }
 
+  // No auth user after both attempts? Stop here — inserting a coach row with
+  // a null auth_user_id creates an account the console can never match to a
+  // login ("Account created" but sign-in dead-ends).
+  if (!authUserId) {
+    console.error('[coach-signup] could not create or resolve an auth user', cuErr);
+    return NextResponse.json({ error: 'Signup failed — please try again, or contact PACT if it keeps happening.' }, { status: 500 });
+  }
+
   // This login is already a coach? (auth_user_id is unique on the table.)
-  if (authUserId) {
-    const { data: coachDupe } = await service
-      .from('personal_trainers').select('id').eq('auth_user_id', authUserId).maybeSingle();
-    if (coachDupe) {
-      return NextResponse.json({ error: 'A coach account already exists for this login — just sign in.' }, { status: 409 });
-    }
+  const { data: coachDupe } = await service
+    .from('personal_trainers').select('id').eq('auth_user_id', authUserId).maybeSingle();
+  if (coachDupe) {
+    return NextResponse.json({ error: 'A coach account already exists for this login — just sign in.' }, { status: 409 });
   }
 
   const console_token = randomBytes(24).toString('hex');
