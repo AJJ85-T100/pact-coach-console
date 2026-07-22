@@ -32,10 +32,12 @@ function Icon({ name }) {
 
 export default function AtRiskBoard({ clients, ptName }) {
   const [roster, setRoster] = useState(null);
+  const [rosterError, setRosterError] = useState(null);
   const [loadingRoster, setLoadingRoster] = useState(true);
   const [selectedId, setSelectedId] = useState(null);
   const [drafts, setDrafts] = useState({});
   const [copied, setCopied] = useState(false);
+  const [sendState, setSendState] = useState({}); // id -> { sending } | { sent } | { error }
 
   const [listWidth, setListWidth] = useState(340);
   const [dragging, setDragging] = useState(false);
@@ -49,9 +51,12 @@ export default function AtRiskBoard({ clients, ptName }) {
       try {
         const res = await fetch('/api/reports/roster?weeks_ago=0', { cache: 'no-store' });
         const j = await res.json();
-        if (alive) setRoster(j);
-      } catch {
-        if (alive) setRoster({ clients: [] });
+        if (!res.ok) throw new Error(j.error || `Request failed (${res.status}).`);
+        if (alive) { setRoster(j); setRosterError(null); }
+      } catch (e) {
+        // Never fake the roster on failure — an error card beats showing every
+        // athlete as at-risk.
+        if (alive) { setRoster({ clients: [] }); setRosterError(e.message || 'Could not load the roster.'); }
       } finally {
         if (alive) setLoadingRoster(false);
       }
@@ -90,7 +95,7 @@ export default function AtRiskBoard({ clients, ptName }) {
 
   function startDrag(e) { e.preventDefault(); draggingRef.current = true; setDragging(true); }
 
-  const all = roster?.clients || (clients || []).map((c) => ({ id: c.id, name: c.name, status: 'at_risk', stats: {} }));
+  const all = roster?.clients || [];
   const flagged = all
     .filter((c) => c.status === 'at_risk' || c.status === 'watch')
     .sort((a, b) => (b.risk_score ?? 0) - (a.risk_score ?? 0));
@@ -120,6 +125,25 @@ export default function AtRiskBoard({ clients, ptName }) {
     try { navigator.clipboard.writeText(msg); setCopied(true); setTimeout(() => setCopied(false), 1800); } catch { /* noop */ }
   }
 
+  // One-tap send: hand PAX the drafted check-in through the existing nudge
+  // pipeline — it sends in the coach's calibrated voice on WhatsApp and logs
+  // to the conversation thread.
+  async function sendViaPax(id, msg) {
+    setSendState((s) => ({ ...s, [id]: { sending: true } }));
+    try {
+      const res = await fetch(`/api/nudge/${id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ brief: msg }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.error || 'PAX could not send it.');
+      setSendState((s) => ({ ...s, [id]: { sent: j.sent || msg } }));
+    } catch (e) {
+      setSendState((s) => ({ ...s, [id]: { error: e.message } }));
+    }
+  }
+
   const selected = flagged.find((c) => c.id === selectedId) || null;
   const state = selectedId ? drafts[selectedId] : null;
 
@@ -139,7 +163,7 @@ export default function AtRiskBoard({ clients, ptName }) {
       {/* Header band */}
       <section className="bg-[#0A2540] text-white px-8 lg:px-10 py-8">
         <p className="font-['Inter'] text-[11px] font-semibold text-[#D92D20] tracking-[0.25em] uppercase mb-2">This week</p>
-        <h1 className="font-['Montserrat'] font-extrabold text-3xl lg:text-4xl uppercase tracking-tight leading-none">At-risk clients</h1>
+        <h1 className="font-['Montserrat'] font-extrabold text-3xl lg:text-4xl uppercase tracking-tight leading-none">At-risk athletes</h1>
         <p className="text-white/70 text-sm mt-2 max-w-2xl">
           The athletes quietly slipping — ranked by risk, with a check-in PAX has drafted for you. Reach them before they ghost.
         </p>
@@ -148,6 +172,11 @@ export default function AtRiskBoard({ clients, ptName }) {
       <div className="px-8 lg:px-10 py-8">
         {loadingRoster ? (
           <p className="font-['Inter'] text-sm text-[#8A95A3]">Reading the roster…</p>
+        ) : rosterError ? (
+          <div className="bg-white border-l-[3px] border-[#D92D20] rounded-[4px] p-6 max-w-xl">
+            <p className="font-['Inter'] text-sm text-[#0A2540]"><span className="font-bold">Couldn't load the roster:</span> {rosterError}</p>
+            <p className="font-['Inter'] text-[12px] text-[#8A95A3] mt-2">Refresh the page to try again — no one has been flagged; we just couldn't check.</p>
+          </div>
         ) : flagged.length === 0 ? (
           <div className="bg-white border border-[#E2E6EB] rounded-[10px] shadow-[0_4px_10px_rgba(10,37,64,0.05)] p-8 max-w-xl">
             <div className="font-['Montserrat'] font-extrabold text-[18px] text-[#0A2540] uppercase tracking-tight mb-2">Nobody's slipping</div>
@@ -198,10 +227,19 @@ export default function AtRiskBoard({ clients, ptName }) {
             <div className="flex-1 min-w-0">
               {!selected ? (
                 <div className="bg-white border border-[#E2E6EB] rounded-[10px] p-8 text-center">
-                  <p className="font-['Inter'] text-sm text-[#8A95A3]">Pick a client to see why they're flagged and the message PAX suggests.</p>
+                  <p className="font-['Inter'] text-sm text-[#8A95A3]">Pick an athlete to see why they're flagged and the message PAX suggests.</p>
                 </div>
               ) : (
-                <DetailPanel key={selected.id} client={selected} state={state} copied={copied} onCopy={copyMsg} onRetry={() => loadDraft(selected.id)} />
+                <DetailPanel
+                  key={selected.id}
+                  client={selected}
+                  state={state}
+                  copied={copied}
+                  onCopy={copyMsg}
+                  onRetry={() => loadDraft(selected.id)}
+                  send={sendState[selected.id]}
+                  onSend={(msg) => sendViaPax(selected.id, msg)}
+                />
               )}
             </div>
           </div>
@@ -211,7 +249,7 @@ export default function AtRiskBoard({ clients, ptName }) {
   );
 }
 
-function DetailPanel({ client, state, copied, onCopy, onRetry }) {
+function DetailPanel({ client, state, copied, onCopy, onRetry, send, onSend }) {
   const data = state?.data;
   const sig = data?.signals || {};
   const score = client.risk_score ?? 50;
@@ -290,10 +328,17 @@ function DetailPanel({ client, state, copied, onCopy, onRetry }) {
           <div className="bg-[#EBF1F5] border-l-[3px] border-[#0A2540] rounded-[0_8px_8px_0] p-4 font-['Inter'] text-[14px] leading-[1.55] text-[#0A2540]">
             {data.draft_message}
           </div>
-          <div className="flex items-center gap-3 mt-3">
+          <div className="flex items-center gap-3 mt-3 flex-wrap">
+            <button
+              onClick={() => onSend(data.draft_message)}
+              disabled={send?.sending || !!send?.sent}
+              className="bg-[#D92D20] hover:bg-[#B0241A] disabled:opacity-60 text-white font-['Inter'] font-semibold text-[12px] uppercase tracking-[0.05em] px-4 py-2.5 rounded-[6px] transition-colors"
+            >
+              {send?.sending ? 'Sending…' : send?.sent ? 'Sent ✓' : 'Send via PAX'}
+            </button>
             <button
               onClick={() => onCopy(data.draft_message)}
-              className="bg-[#D92D20] hover:bg-[#B0241A] text-white font-['Inter'] font-semibold text-[12px] uppercase tracking-[0.05em] px-4 py-2.5 rounded-[6px] transition-colors"
+              className="bg-white border border-[#E2E6EB] hover:border-[#0A2540] text-[#0A2540] font-['Inter'] font-semibold text-[12px] uppercase tracking-[0.05em] px-4 py-2.5 rounded-[6px] transition-colors"
             >
               {copied ? 'Copied ✓' : 'Copy message'}
             </button>
@@ -304,8 +349,19 @@ function DetailPanel({ client, state, copied, onCopy, onRetry }) {
               Redraft
             </button>
           </div>
+          {send?.sent && (
+            <div className="mt-3 bg-emerald-50 border border-emerald-200 rounded-[6px] p-3">
+              <p className="font-['Inter'] text-[11px] font-bold uppercase tracking-[0.1em] text-emerald-700 mb-1">PAX sent:</p>
+              <p className="font-['Inter'] text-[13px] leading-[1.5] text-[#0A2540]">{send.sent}</p>
+            </div>
+          )}
+          {send?.error && (
+            <p className="font-['Inter'] text-[12px] text-[#D92D20] mt-2.5">
+              Couldn't send: {send.error} — copy the message and send it from WhatsApp instead.
+            </p>
+          )}
           <p className="font-['Inter'] text-[11px] text-[#8A95A3] mt-2.5 leading-[1.5]">
-            PAX drafted this — no guilt, no plan-talk, just a door back in. Send it from WhatsApp now; one-tap send from here arrives once the channel is connected.
+            PAX drafted this — no guilt, no plan-talk, just a door back in. Send via PAX delivers it on WhatsApp in your voice, or copy it to send yourself.
           </p>
         </div>
       )}

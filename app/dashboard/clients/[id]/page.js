@@ -404,6 +404,72 @@ export default async function ClientDetailPage({ params }) {
             )}
           </Card>
 
+          {/* Athlete profile — the onboarding answers a PT actually coaches from.
+              Injuries first (safety), then the why, then logistics. */}
+          <Card title="Athlete profile">
+            {(() => {
+              const days = Array.isArray(client.training_days) ? client.training_days : [];
+              const hasWhy = client.motivation || client.why_now || client.biggest_blocker || client.tried_before;
+              const hasLogistics = client.experience_level || client.training_style || days.length > 0 ||
+                client.training_time || client.session_length_minutes;
+              if (!client.injuries && !hasWhy && !hasLogistics) {
+                return (
+                  <p className="text-[12px] text-muted">
+                    Nothing captured yet — {firstName}'s onboarding answers will appear here.
+                  </p>
+                );
+              }
+              return (
+                <div className="space-y-4">
+                  {client.injuries && (
+                    <div className="bg-warn-light border border-warn rounded px-3.5 py-2.5">
+                      <div className="text-[9px] font-bold tracking-[0.15em] uppercase text-warn-dark mb-1">
+                        ⚠ Injuries & limitations
+                      </div>
+                      <p className="text-[13px] text-blue leading-snug">{client.injuries}</p>
+                    </div>
+                  )}
+                  {hasWhy && (
+                    <div className="space-y-2">
+                      {client.motivation && (
+                        <ProfileLine label="Their why" text={client.motivation} />
+                      )}
+                      {client.why_now && (
+                        <ProfileLine label="Why now" text={client.why_now} />
+                      )}
+                      {client.biggest_blocker && (
+                        <ProfileLine label="Biggest blocker" text={client.biggest_blocker} />
+                      )}
+                      {client.tried_before && (
+                        <ProfileLine label="Tried before" text={client.tried_before} />
+                      )}
+                    </div>
+                  )}
+                  {hasLogistics && (
+                    <div className="pt-3 border-t border-border grid grid-cols-2 gap-x-4 gap-y-3">
+                      {client.experience_level && <Stat label="Experience" value={client.experience_level} />}
+                      {client.training_style && <Stat label="Style" value={client.training_style} />}
+                      {client.training_time && <Stat label="Prefers" value={client.training_time} />}
+                      {client.session_length_minutes && <Stat label="Session length" value={`${client.session_length_minutes} min`} />}
+                      {days.length > 0 && (
+                        <div className="col-span-2">
+                          <div className="text-[9px] font-bold tracking-[0.15em] uppercase text-muted mb-1.5">Training days</div>
+                          <div className="flex gap-1.5 flex-wrap">
+                            {['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(d => (
+                              <span key={d} className={`text-[10px] font-bold px-2 py-1 rounded ${
+                                days.includes(d) ? 'bg-blue text-white' : 'bg-bg text-muted'
+                              }`}>{d}</span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+          </Card>
+
           <Card title="Journey">
             <div className="grid grid-cols-3 gap-4 mb-4">
               <Stat label="Start"   value={client.start_weight ? `${client.start_weight}kg` : '—'} />
@@ -682,6 +748,15 @@ function Card({ title, children }) {
       <div className="p-5">
         {children}
       </div>
+    </div>
+  );
+}
+
+function ProfileLine({ label, text }) {
+  return (
+    <div>
+      <div className="text-[9px] font-bold tracking-[0.15em] uppercase text-muted mb-0.5">{label}</div>
+      <p className="text-[13px] text-blue leading-snug">{text}</p>
     </div>
   );
 }

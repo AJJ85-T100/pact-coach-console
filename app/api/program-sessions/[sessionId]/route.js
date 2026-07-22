@@ -13,6 +13,8 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin as supabase } from '@/lib/supabase/admin';
 import { requireSessionAccess } from '@/lib/auth/requireCoach';
+import { rematerializeIfActive } from '@/lib/programs/materialize';
+import { sanitizeExercises } from '@/lib/programs/sanitizeExercises';
 
 export const dynamic = 'force-dynamic';
 
@@ -75,7 +77,11 @@ export async function PATCH(req, context) {
     return NextResponse.json({ error: 'Session not found.' }, { status: 404 });
   }
 
-  return NextResponse.json({ session });
+  // If this session belongs to an ACTIVE programme, push the edit straight to
+  // the athlete & PAX — no silent stale-plan gap between edit and re-activate.
+  const remat = await rematerializeIfActive(session.program_id);
+
+  return NextResponse.json({ session, livePlanUpdated: remat.active, liveRows: remat.rows });
 }
 
 export async function DELETE(_req, context) {
@@ -89,6 +95,13 @@ export async function DELETE(_req, context) {
   const access = await requireSessionAccess(sessionId);
   if (access.error) return access.error;
 
+  // Grab the parent programme before the row disappears, so we can push the
+  // deletion to the live plan if that programme is active.
+  const { data: existing } = await supabase
+    .from('program_sessions')
+    .select('program_id')
+    .eq('id', sessionId)
+    .maybeSingle();
 
   const { error } = await supabase
     .from('program_sessions')
@@ -100,53 +113,10 @@ export async function DELETE(_req, context) {
     return NextResponse.json({ error: 'Could not delete session.' }, { status: 500 });
   }
 
-  return NextResponse.json({ ok: true });
+  const remat = await rematerializeIfActive(existing?.program_id);
+
+  return NextResponse.json({ ok: true, livePlanUpdated: remat.active, liveRows: remat.rows });
 }
 
-function sanitizeExercises(exercises) {
-  return exercises
-    .filter((e) => e && typeof e === 'object' && typeof e.name === 'string' && e.name.trim())
-    .map((e, i) => {
-      const sets       = toIntOrNull(e.sets, 1, 20);
-      const repsMin    = toIntOrNull(e.reps_min, 1, 100);
-      const repsMax    = toIntOrNull(e.reps_max, 1, 100);
-      const rpe        = toFloatOrNull(e.rpe, 1, 10);
-      const restSecs   = toIntOrNull(e.rest_seconds, 0, 1800);
-
-      return {
-        id: typeof e.id === 'string' && e.id ? e.id : `ex-${Date.now()}-${i}`,
-        name: e.name.trim(),
-        // Cardio prescription (assault bike, rower, treadmill…): time, calories
-        // and/or target heart rate instead of sets × reps × weight.
-        mode: e.mode === 'cardio' ? 'cardio' : null,
-        time_min:    toIntOrNull(e.time_min, 1, 600),
-        target_cals: toIntOrNull(e.target_cals, 1, 5000),
-        target_hr:   toIntOrNull(e.target_hr, 60, 220),
-        sets,
-        reps_min: repsMin,
-        reps_max: repsMax,
-        weight: typeof e.weight === 'string' ? e.weight.trim() || null : null,
-        rpe,
-        rest_seconds: restSecs,
-        tempo: typeof e.tempo === 'string' ? e.tempo.trim() || null : null,
-        notes: typeof e.notes === 'string' ? e.notes.trim() || null : null,
-        video_url: typeof e.video_url === 'string' && /^https?:\/\//.test(e.video_url.trim())
-          ? e.video_url.trim().slice(0, 500) : null,
-        equipment_needed: Array.isArray(e.equipment_needed)
-          ? e.equipment_needed.filter((x) => typeof x === 'string').map((x) => x.trim()).filter(Boolean)
-          : [],
-      };
-    });
-}
-
-function toIntOrNull(v, min, max) {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return null;
-  return Math.max(min, Math.min(max, Math.floor(n)));
-}
-
-function toFloatOrNull(v, min, max) {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return null;
-  return Math.max(min, Math.min(max, n));
-}
+// sanitizeExercises now lives in lib/programs/sanitizeExercises.js (shared
+// with the session-create route so duplicated sessions keep their exercises).

@@ -141,13 +141,14 @@ export default async function MyDayPage() {
   // ============================================================
   let pacts7d = [], todayProgramme = [], wins = [], milestones = [];
   let slips24h = [], recentMessages = [], weeklyPactsThisWeek = [];
+  let pendingClips = [], upcomingAppts = [];
 
   if (clientIds.length > 0) {
     const day24Ago = new Date(today); day24Ago.setDate(today.getDate() - 1);
 
     const [
       pactsR, programmeR, winsR, milestonesR,
-      slipsR, msgsR, weeklyR,
+      slipsR, msgsR, weeklyR, clipsR, apptsR,
     ] = await Promise.all([
       service.from('daily_pacts')
         .select('client_id, date, status')
@@ -191,6 +192,19 @@ export default async function MyDayPage() {
         .select('client_id, week_start, status, pact_score')
         .in('client_id', clientIds)
         .eq('week_start', mondayStr),
+
+      service.from('form_clips')
+        .select('id, client_id')
+        .in('client_id', clientIds)
+        .eq('review_status', 'pending'),
+
+      service.from('appointments')
+        .select('client_id, scheduled_at, note, status')
+        .in('client_id', clientIds)
+        .eq('status', 'scheduled')
+        .gte('scheduled_at', new Date().toISOString())
+        .order('scheduled_at', { ascending: true })
+        .limit(5),
     ]);
 
     pacts7d              = pactsR.data    || [];
@@ -200,6 +214,8 @@ export default async function MyDayPage() {
     slips24h             = slipsR.data    || [];
     recentMessages       = msgsR.data     || [];
     weeklyPactsThisWeek  = weeklyR.data   || [];
+    pendingClips         = clipsR.data    || [];
+    upcomingAppts        = apptsR.data    || [];
   }
 
   // ============================================================
@@ -238,6 +254,11 @@ export default async function MyDayPage() {
 
   // Reports drafted: weekly_pacts with this week_start
   const reportsDrafted = weeklyPactsThisWeek.length;
+
+  // Live queue signals
+  const pendingFormReviews = pendingClips.length;
+  const messages24h = recentMessages.length;
+  const nextAppt = upcomingAppts[0] || null;
 
   // ----- Unified activity feed --------------------------------
   const milestoneEvents = milestones.map(m => {
@@ -285,9 +306,9 @@ export default async function MyDayPage() {
   // Smart subtitle
   let heroSubtitle;
   if (total === 0) {
-    heroSubtitle = 'No clients yet. Invite your first athlete to get started.';
+    heroSubtitle = 'No athletes yet. Invite your first athlete to get started.';
   } else if (sessionsToday > 0) {
-    heroSubtitle = `${sessionsToday} session${sessionsToday === 1 ? '' : 's'} scheduled today.${atRiskCount > 0 ? ` ${atRiskCount} client${atRiskCount === 1 ? '' : 's'} need${atRiskCount === 1 ? 's' : ''} attention.` : ''}`;
+    heroSubtitle = `${sessionsToday} session${sessionsToday === 1 ? '' : 's'} scheduled today.${atRiskCount > 0 ? ` ${atRiskCount} athlete${atRiskCount === 1 ? '' : 's'} need${atRiskCount === 1 ? 's' : ''} attention.` : ''}`;
   } else if (atRiskCount > 0) {
     const names = clients.filter(c => c.status === 'at_risk').map(c => c.name.split(' ')[0]).join(', ');
     heroSubtitle = `${total} athletes in your roster. ${atRiskCount} need attention — ${names}.`;
@@ -330,9 +351,10 @@ export default async function MyDayPage() {
             />
             <StatusTile
               label="Form reviews"
-              value={0}
-              sub="Coming soon"
-              muted
+              value={pendingFormReviews}
+              accent={pendingFormReviews > 0}
+              sub={pendingFormReviews > 0 ? 'Waiting for you' : 'Queue clear'}
+              href="/dashboard/form-review"
             />
             <StatusTile
               label="Reports drafted"
@@ -345,13 +367,13 @@ export default async function MyDayPage() {
               value={atRiskCount}
               accent={atRiskCount > 0}
               sub={atRiskCount > 0 ? 'Action required' : 'All clear'}
-              href="/dashboard/athletes"
+              href="/dashboard/at-risk"
             />
           </section>
 
           {/* Next session */}
-          {sessionsToday > 0 ? (
-            <NextSessionCard programme={todayProgramme} clientById={clientById} />
+          {nextAppt || sessionsToday > 0 ? (
+            <NextSessionCard programme={todayProgramme} clientById={clientById} nextAppt={nextAppt} />
           ) : (
             <NoSessionsPlaceholder />
           )}
@@ -371,6 +393,8 @@ export default async function MyDayPage() {
           <TodaysQueue
             atRiskCount={atRiskCount}
             sessionsToday={sessionsToday}
+            pendingFormReviews={pendingFormReviews}
+            messages24h={messages24h}
           />
         </div>
 
@@ -395,7 +419,7 @@ function QuickActions() {
     { href: '/dashboard/reports',  label: 'PAX reports' },
     { href: '/dashboard/athletes', label: 'All athletes' },
     { href: '/dashboard/programs', label: 'Build a program' },
-    { href: '/dashboard/invite',   label: 'Invite client' },
+    { href: '/dashboard/invite',   label: 'Invite athlete' },
   ];
   return (
     <section className="flex flex-wrap gap-2">
@@ -446,9 +470,22 @@ function StatusTile({ label, value, sub, accent, muted, href }) {
   return <div className={base}>{inner}</div>;
 }
 
-function NextSessionCard({ programme, clientById }) {
+function NextSessionCard({ programme, clientById, nextAppt }) {
+  // Prefer a real booked appointment (it has a time); fall back to today's
+  // programmed sessions when nothing is in the diary.
+  const apptClient = nextAppt ? clientById[nextAppt.client_id] : null;
   const next = programme[0];
-  const client = clientById[next?.client_id];
+  const client = apptClient || clientById[next?.client_id];
+
+  const apptDate = nextAppt ? new Date(nextAppt.scheduled_at) : null;
+  const isToday = apptDate && apptDate.toLocaleDateString('en-CA') === new Date().toLocaleDateString('en-CA');
+  const whenLabel = apptDate
+    ? (isToday ? 'Today' : apptDate.toLocaleDateString('en-GB', { weekday: 'short' }))
+    : 'Today';
+  const bigValue = apptDate
+    ? apptDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+    : programme.length;
+  const smallLabel = apptDate ? 'booked' : 'total';
 
   return (
     <div className="bg-white rounded-lg shadow-card border border-border p-5">
@@ -464,17 +501,18 @@ function NextSessionCard({ programme, clientById }) {
       </div>
       <div className="flex items-center gap-4">
         <div className="bg-blue text-white rounded p-3 text-center min-w-[80px]">
-          <div className="text-[10px] font-bold tracking-wider uppercase opacity-80">Today</div>
-          <div className="font-display font-extrabold text-lg leading-none">{programme.length}</div>
-          <div className="text-[10px] tracking-wider uppercase opacity-80 mt-1">total</div>
+          <div className="text-[10px] font-bold tracking-wider uppercase opacity-80">{whenLabel}</div>
+          <div className="font-display font-extrabold text-lg leading-none">{bigValue}</div>
+          <div className="text-[10px] tracking-wider uppercase opacity-80 mt-1">{smallLabel}</div>
         </div>
         <div className="min-w-0">
           <div className="font-display font-bold text-blue text-base">
-            {client?.name || 'Client'}
+            {client?.name || 'Athlete'}
           </div>
           <div className="text-xs text-muted">
-            {client?.goal?.replace(/_/g, ' ') || 'session'}
-            {programme.length > 1 && <> · +{programme.length - 1} more today</>}
+            {nextAppt?.note || client?.goal?.replace(/_/g, ' ') || 'session'}
+            {!nextAppt && programme.length > 1 && <> · +{programme.length - 1} more today</>}
+            {nextAppt && programme.length > 0 && <> · {programme.length} programmed today</>}
           </div>
         </div>
       </div>
@@ -529,11 +567,11 @@ function RosterPulse({ clients, adherenceByClient, seriesByClient, activeThisWee
           Roster pulse · {activeThisWeek} active
         </h3>
         <Link href="/dashboard/athletes" className="text-[10px] font-semibold uppercase tracking-wider text-red hover:text-red-deep">
-          All clients →
+          All athletes →
         </Link>
       </div>
       {clients.length === 0 ? (
-        <p className="text-muted text-xs">No clients yet.</p>
+        <p className="text-muted text-xs">No athletes yet.</p>
       ) : (
         <div className="grid grid-cols-3 gap-2">
           {clients.map(c => {
@@ -601,7 +639,7 @@ function ThisWeekWins({ wins, clientById }) {
   );
 }
 
-function TodaysQueue({ atRiskCount, sessionsToday }) {
+function TodaysQueue({ atRiskCount, sessionsToday, pendingFormReviews, messages24h }) {
   return (
     <div className="bg-white rounded-lg shadow-card border border-border p-5">
       <div className="flex items-center justify-between mb-4">
@@ -611,9 +649,9 @@ function TodaysQueue({ atRiskCount, sessionsToday }) {
       </div>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
         <QueueButton label="Pre-session briefs" count={sessionsToday} href="/dashboard/briefs" />
-        <QueueButton label="Form videos"        count={0} disabled />
-        <QueueButton label="Client messages"    count={0} disabled />
-        <QueueButton label="At-risk follow-up"  count={atRiskCount} accent={atRiskCount > 0} disabled />
+        <QueueButton label="Form videos"        count={pendingFormReviews} accent={pendingFormReviews > 0} href="/dashboard/form-review" />
+        <QueueButton label="Messages · 24h"     count={messages24h} href="/dashboard/activity" />
+        <QueueButton label="At-risk follow-up"  count={atRiskCount} accent={atRiskCount > 0} href="/dashboard/at-risk" />
       </div>
     </div>
   );
@@ -653,7 +691,7 @@ function ActivityFeed({ events, clientById }) {
     <div className="bg-white rounded-lg shadow-card border border-border" style={{ maxHeight: 'calc(100vh - 3rem)' }}>
       <div className="px-5 py-4 border-b border-border">
         <p className="text-[10px] font-bold tracking-[0.2em] uppercase text-red mb-1">
-          Live · Last 24h
+          Last 24h · refreshes on load
         </p>
         <h3 className="font-display font-extrabold text-blue text-lg uppercase tracking-tight">
           Activity

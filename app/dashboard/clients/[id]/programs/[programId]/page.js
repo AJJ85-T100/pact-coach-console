@@ -79,6 +79,14 @@ export default function ProgramEditorPage() {
   const [data, setData] = useState(null);
   const [loadError, setLoadError] = useState(null);
   const [library, setLibrary] = useState([]);
+  const [liveFlash, setLiveFlash] = useState(false);
+
+  // Auto-clear the "live plan updated" flash
+  useEffect(() => {
+    if (!liveFlash) return;
+    const t = setTimeout(() => setLiveFlash(false), 4000);
+    return () => clearTimeout(t);
+  }, [liveFlash]);
 
   useEffect(() => {
     let cancelled = false;
@@ -111,7 +119,12 @@ export default function ProgramEditorPage() {
   async function refresh() {
     const res = await fetch(`/api/programs/${programId}?t=${Date.now()}`, { cache: 'no-store' });
     const json = await res.json();
-    if (res.ok) setData(json);
+    if (res.ok) {
+      setData(json);
+      // Every session/exercise write to an ACTIVE programme auto-rematerializes
+      // the athlete's dated plan server-side — tell the coach it's already live.
+      if (json?.program?.status === 'active') setLiveFlash(true);
+    }
   }
 
   if (loadError) {
@@ -148,6 +161,16 @@ export default function ProgramEditorPage() {
           sessionCount={sessions.length}
           onChange={refresh}
         />
+        {program.status === 'active' && (
+          <div className="mb-6 flex items-center gap-2 bg-[#0F8A5F]/10 border border-[#0F8A5F]/30 rounded-[6px] px-4 py-2.5">
+            <span className="w-2 h-2 rounded-full bg-[#0F8A5F] flex-shrink-0" />
+            <p className="font-['Inter'] text-[12px] text-[#0A2540]">
+              <span className="font-bold">Live programme</span> — edits here push straight to
+              {client?.name ? ` ${client.name.split(' ')[0]}'s` : " the athlete's"} plan and PAX.
+              {liveFlash && <span className="font-semibold text-[#0F8A5F]"> Saved — live plan updated.</span>}
+            </p>
+          </div>
+        )}
         <SessionsSection
           programId={programId}
           sessions={sessions}
@@ -642,6 +665,42 @@ function WeekGroup({ weekNumber, sessions, onChange }) {
   const [dragIndex, setDragIndex] = useState(null);
   const [overIndex, setOverIndex] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [copying, setCopying] = useState(false);
+  const [copyError, setCopyError] = useState(null);
+
+  // Copy every session in this week into week N+1 — exercises included.
+  // The single biggest time-saver in real programming: build week 1, copy it
+  // forward, then adjust loads.
+  async function copyWeekForward() {
+    if (copying || sessions.length === 0) return;
+    setCopying(true);
+    setCopyError(null);
+    try {
+      for (const s of sessions) {
+        const res = await fetch(`/api/programs/${s.program_id}/sessions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: s.name,
+            week_number: weekNumber + 1,
+            day_index: s.day_index,
+            notes: s.notes || null,
+            // Strip ids so the server issues fresh ones for the copies.
+            exercises: (Array.isArray(s.exercises) ? s.exercises : []).map(({ id, ...rest }) => rest),
+          }),
+        });
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}));
+          throw new Error(d.error || 'Could not copy a session.');
+        }
+      }
+      onChange();
+    } catch (err) {
+      setCopyError(err.message);
+    } finally {
+      setCopying(false);
+    }
+  }
 
   // Resync to server order whenever the parent refetches.
   useEffect(() => { setOrder(sessions); }, [sessions]);
@@ -711,6 +770,17 @@ function WeekGroup({ weekNumber, sessions, onChange }) {
           Week {weekNumber}
         </span>
         <span className="h-px flex-1 bg-[#E2E6EB]" />
+        {copyError && (
+          <span className="font-['Inter'] text-[10px] text-[#D92D20] uppercase tracking-[1px]">{copyError}</span>
+        )}
+        <button
+          onClick={copyWeekForward}
+          disabled={copying}
+          title={`Copy every week ${weekNumber} session (exercises included) into week ${weekNumber + 1}`}
+          className="font-['Inter'] font-semibold text-[10px] text-[#0A2540] hover:text-[#D92D20] disabled:opacity-40 uppercase tracking-[1px] transition-colors"
+        >
+          {copying ? 'Copying…' : `Copy to week ${weekNumber + 1} →`}
+        </button>
         {saving
           ? <span className="font-['Inter'] text-[10px] text-[#8A95A3] uppercase tracking-[1.5px]">Saving order…</span>
           : canReorder
@@ -860,6 +930,36 @@ function SessionCard({ session, onChange }) {
 function SessionHeader({ session, exerciseCount, onEdit, onChange }) {
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [duplicating, setDuplicating] = useState(false);
+
+  // One-click duplicate — same week & day, exercises included. The coach then
+  // just edits the copy (rename, move day, tweak loads).
+  async function handleDuplicate() {
+    if (duplicating) return;
+    setDuplicating(true);
+    try {
+      const res = await fetch(`/api/programs/${session.program_id}/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: `${session.name} (copy)`,
+          week_number: session.week_number,
+          day_index: session.day_index,
+          notes: session.notes || null,
+          exercises: (Array.isArray(session.exercises) ? session.exercises : []).map(({ id, ...rest }) => rest),
+        }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || 'Could not duplicate.');
+      }
+      onChange();
+    } catch (err) {
+      alert(`Couldn't duplicate: ${err.message}`);
+    } finally {
+      setDuplicating(false);
+    }
+  }
 
   // Cancel delete confirm after 3 seconds of inactivity
   useEffect(() => {
@@ -922,6 +1022,14 @@ function SessionHeader({ session, exerciseCount, onEdit, onChange }) {
           </div>
         ) : (
           <div className="flex items-center gap-2">
+            <button
+              onClick={handleDuplicate}
+              disabled={duplicating}
+              title="Duplicate session (exercises included)"
+              className="font-['Inter'] text-[10px] font-bold uppercase tracking-[1px] px-2 py-1 bg-white/10 hover:bg-white/20 disabled:opacity-50 text-white rounded-[3px] transition-colors"
+            >
+              {duplicating ? '…' : 'Duplicate'}
+            </button>
             <IconButton onClick={onEdit} title="Edit session" variant="white">
               <EditIcon />
             </IconButton>

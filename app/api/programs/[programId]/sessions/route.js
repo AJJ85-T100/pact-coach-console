@@ -12,6 +12,8 @@ import { NextResponse } from 'next/server';
 import { unstable_noStore as noStore } from 'next/cache';
 import { supabaseAdmin as supabase } from '@/lib/supabase/admin';
 import { requireProgramAccess } from '@/lib/auth/requireCoach';
+import { rematerializeIfActive } from '@/lib/programs/materialize';
+import { sanitizeExercises } from '@/lib/programs/sanitizeExercises';
 
 export const dynamic = 'force-dynamic';
 
@@ -103,6 +105,10 @@ export async function POST(req, context) {
     return NextResponse.json({ error: 'Programme not found.' }, { status: 404 });
   }
 
+  // Optional starting exercises — used by duplicate-session and copy-week so
+  // a copy arrives complete rather than as an empty shell.
+  const exercises = Array.isArray(body.exercises) ? sanitizeExercises(body.exercises) : [];
+
   const { data, error } = await supabase
     .from('program_sessions')
     .insert({
@@ -111,7 +117,7 @@ export async function POST(req, context) {
       week_number: Math.floor(week),
       day_index: Math.floor(day),
       notes,
-      exercises: [],
+      exercises,
     })
     .select()
     .maybeSingle();
@@ -121,5 +127,11 @@ export async function POST(req, context) {
     return NextResponse.json({ error: 'Could not create session.' }, { status: 500 });
   }
 
-  return NextResponse.json({ session: data }, { status: 201, headers: noStoreHeaders });
+  // Push straight to the athlete & PAX when the programme is already live.
+  const remat = await rematerializeIfActive(programId);
+
+  return NextResponse.json(
+    { session: data, livePlanUpdated: remat.active, liveRows: remat.rows },
+    { status: 201, headers: noStoreHeaders },
+  );
 }

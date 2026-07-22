@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { createClient, createServiceClient } from '@/lib/supabase/server';
+import { riskScore, riskTier } from '@/lib/risk';
 
 // ============================================================
 // Helpers
@@ -74,14 +75,17 @@ async function fetchAthleteData(service, client) {
       .gte('created_at', sevenAgo.toISOString())
       .order('created_at', { ascending: false }),
     service.from('daily_pacts')
-      .select('date, status')
+      .select('date, status, wins_completed, total_wins')
       .eq('client_id', client.id)
       .gte('date', dateStrISO(fourteenAgo)),
+    // 90-day lookback so days-silent matches the shared risk formula
+    // (engagement still only counts the last 7 days below).
     service.from('conversations')
       .select('created_at, role')
       .eq('client_id', client.id)
       .eq('role', 'user')
-      .gte('created_at', sevenAgo.toISOString()),
+      .gte('created_at', new Date(Date.now() - 90 * 86400000).toISOString())
+      .order('created_at', { ascending: false }),
     service.from('slip_events')
       .select('id')
       .eq('client_id', client.id)
@@ -119,8 +123,11 @@ async function fetchAthleteData(service, client) {
   const pactDays     = days.map(d => classifyPact(pactByDate[d]));
 
   // Engagement score: % of last 7 days with at least one user message
+  const sevenAgoISO = sevenAgo.toISOString();
   const uniqueConvoDays = new Set(
-    (convosR.data || []).map(c => c.created_at.split('T')[0])
+    (convosR.data || [])
+      .filter(c => c.created_at >= sevenAgoISO)
+      .map(c => c.created_at.split('T')[0])
   );
   const engagement = Math.round((uniqueConvoDays.size / 7) * 100);
 
@@ -133,10 +140,19 @@ async function fetchAthleteData(service, client) {
   if (thisWeekWon > lastWeekWon + 1)      trend = 'building';
   else if (thisWeekWon < lastWeekWon - 1) trend = 'declining';
 
-  // Risk
+  // Risk — the ONE shared definition (lib/risk.js), identical inputs to the
+  // at-risk board and PAX reports: silence + 7-day pact adherence. A PAX
+  // at_risk flag on the client row still forces the top tier.
   const slipsThisWeek = slipsR.data?.length || 0;
-  const risk = (client.status === 'at_risk' || slipsThisWeek >= 3) ? 'high'
-             : slipsThisWeek > 0 ? 'medium' : 'low';
+  const week7 = days[0];
+  const week7Rows = pactsR.data?.filter(p => p.date >= week7) || [];
+  const winsSum  = week7Rows.reduce((s, r) => s + (r.wins_completed || 0), 0);
+  const totalSum = week7Rows.reduce((s, r) => s + (r.total_wins || 0), 0);
+  const adherencePct = totalSum > 0 ? Math.round((winsSum / totalSum) * 100) : null;
+  const lastMsg = convosR.data?.[0]?.created_at || null;
+  const daysSilent = lastMsg ? Math.floor((Date.now() - new Date(lastMsg).getTime()) / 86400000) : null;
+  const score = riskScore({ daysSilent, adherencePct, daysLogged: week7Rows.length });
+  const risk = client.status === 'at_risk' ? 'high' : riskTier(score);
 
   // Weight progress
   const currentWeight = weighR.data?.[0]?.weight ?? client.current_weight;

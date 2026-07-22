@@ -10,6 +10,7 @@
 import { NextResponse } from 'next/server';
 import { unstable_noStore as noStore } from 'next/cache';
 import { createClient, createServiceClient } from '@/lib/supabase/server';
+import { riskScore, statusOf } from '@/lib/risk';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,23 +20,8 @@ function pct(wins, total) {
   return total > 0 ? Math.round((wins / total) * 100) : null;
 }
 
-function statusOf({ adherencePct, daysLogged }) {
-  if (daysLogged === 0 || adherencePct == null) return 'at_risk';
-  if (adherencePct < 30) return 'at_risk';
-  if (adherencePct < 55) return 'watch';
-  if (adherencePct < 80) return 'on_track';
-  return 'strong';
-}
-
-// 0-100 risk score: weighted blend of silence and low adherence. Drives the
-// at-risk list ranking and the risk meter. No model call — pure arithmetic.
-function riskScore({ daysSilent, adherencePct, daysLogged }) {
-  const ds = daysSilent == null ? 21 : daysSilent;
-  let s = Math.min(55, (ds / 14) * 55);
-  s += ((100 - (adherencePct == null ? 0 : adherencePct)) / 100) * 35;
-  if (!daysLogged) s += 10;
-  return Math.round(Math.min(100, Math.max(0, s)));
-}
+// riskScore/statusOf live in lib/risk.js — the single shared definition used
+// by the roster cards, the at-risk board and these reports.
 
 export async function GET(req) {
   noStore();

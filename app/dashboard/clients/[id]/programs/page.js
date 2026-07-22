@@ -280,7 +280,7 @@ function CreateProgramForm({ clientId, onCancel, onCreated }) {
           <input
             type="number"
             min="1"
-            max="104"
+            max="52"
             value={weeks}
             onChange={(e) => setWeeks(e.target.value)}
             placeholder="12"
