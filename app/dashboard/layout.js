@@ -61,10 +61,10 @@ export default async function DashboardLayout({ children }) {
             </div>
             <SidebarNavItem href="/dashboard" label="Dashboard" exact />
             <SidebarNavItem href="/dashboard/athletes" label="Athletes" count={totalClients} />
-            <SidebarNavItem href="/dashboard/invite" label="Invite client" />
-            <SidebarNavItem href="/dashboard/programs" label="Programs" />
+            <SidebarNavItem href="/dashboard/invite" label="Invite athlete" />
+            <SidebarNavItem href="/dashboard/programs" label="Programmes" />
             <SidebarNavItem href="/dashboard/nutrition" label="Nutrition targets" />
-            <SidebarNavItem label="Templates" disabled />
+            <SidebarNavItem href="/dashboard/templates" label="Templates" />
           </div>
 
           {/* This Week section */}
@@ -74,9 +74,9 @@ export default async function DashboardLayout({ children }) {
             </div>
             <SidebarNavItem href="/dashboard/activity" label="Activity feed" />
             <SidebarNavItem href="/dashboard/form-review" label="Form review" />
-            <SidebarNavItem href="/dashboard/notes" label="Client notes" />
+            <SidebarNavItem href="/dashboard/notes" label="Athlete notes" />
             <SidebarNavItem href="/dashboard/briefs" label="Pre-session briefs" />
-            <SidebarNavItem href="/dashboard/at-risk" label="At-risk clients" count={atRiskCount} badge={atRiskCount > 0} />
+            <SidebarNavItem href="/dashboard/at-risk" label="At-risk athletes" count={atRiskCount} badge={atRiskCount > 0} />
             <SidebarNavItem href="/dashboard/reports" label="PAX reports" />
           </div>
 

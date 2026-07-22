@@ -17,12 +17,13 @@
  */
 
 import { useEffect, useState } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 
 export default function ProgramsListPage() {
   const params = useParams();
   const clientId = params.id;
+  const router = useRouter();
 
   const [data, setData] = useState(null);    // { client, programs }
   const [loadError, setLoadError] = useState(null);
@@ -53,9 +54,14 @@ export default function ProgramsListPage() {
     if (res.ok) setData(json);
   }
 
-  function handleCreated() {
+  function handleCreated(program) {
     setShowForm(false);
-    refresh();
+    // Straight into the editor — no bounce back to the list.
+    if (program?.id) {
+      router.push(`/dashboard/clients/${clientId}/programs/${program.id}`);
+    } else {
+      refresh();
+    }
   }
 
   if (loadError) {
@@ -229,6 +235,30 @@ function CreateProgramForm({ clientId, onCancel, onCreated }) {
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+  const [templates, setTemplates] = useState([]);
+  const [templateId, setTemplateId] = useState('');
+
+  // The coach's template library — pick one to start from instead of scratch.
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/templates', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((j) => { if (!cancelled && Array.isArray(j.templates)) setTemplates(j.templates); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  const selectedTemplate = templates.find((t) => t.id === templateId) || null;
+
+  function pickTemplate(id) {
+    setTemplateId(id);
+    const t = templates.find((x) => x.id === id);
+    // Prefill name/weeks from the template if the coach hasn't typed their own.
+    if (t) {
+      if (!name.trim()) setName(t.name);
+      if (!weeks && t.weeks) setWeeks(String(t.weeks));
+    }
+  }
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -245,11 +275,12 @@ function CreateProgramForm({ clientId, onCancel, onCreated }) {
           weeks: weeks ? parseInt(weeks, 10) : undefined,
           start_date: startDate || undefined,
           notes: notes.trim() || undefined,
+          template_id: templateId || undefined,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Could not create program.');
-      onCreated();
+      onCreated(data.program);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -260,8 +291,34 @@ function CreateProgramForm({ clientId, onCancel, onCreated }) {
   return (
     <form onSubmit={handleSubmit} className="bg-white border border-[#E2E6EB] rounded-[6px] p-6 mb-2">
       <h2 className="font-['Montserrat'] font-extrabold text-xl text-[#0A2540] uppercase tracking-tight mb-5">
-        New program
+        New programme
       </h2>
+
+      {templates.length > 0 && (
+        <div className="mb-4">
+          <FormField label="Start from a template (optional)">
+            <select
+              value={templateId}
+              onChange={(e) => pickTemplate(e.target.value)}
+              className="w-full bg-[#F4F6F8] border border-[#E2E6EB] rounded-[4px] px-3 py-2.5 text-sm text-[#0A2540] font-['Inter'] focus:outline-none focus:border-[#0A2540] transition-colors"
+            >
+              <option value="">Blank — build from scratch</option>
+              {templates.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name} ({t.session_count} session{t.session_count === 1 ? '' : 's'}
+                  {t.week_span > 1 ? ` over ${t.week_span} weeks` : ''})
+                </option>
+              ))}
+            </select>
+          </FormField>
+          {selectedTemplate && (
+            <p className="font-['Inter'] text-[12px] text-[#8A95A3] mt-1.5">
+              Loads {selectedTemplate.session_count} session{selectedTemplate.session_count === 1 ? '' : 's'} with
+              {' '}{selectedTemplate.exercise_count} exercise{selectedTemplate.exercise_count === 1 ? '' : 's'} — then edit freely for this athlete.
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
         <FormField label="Name" required>
@@ -329,7 +386,7 @@ function CreateProgramForm({ clientId, onCancel, onCreated }) {
             </>
           ) : (
             <>
-              Create program
+              {templateId ? 'Create from template' : 'Create programme'}
               <span aria-hidden="true">→</span>
             </>
           )}

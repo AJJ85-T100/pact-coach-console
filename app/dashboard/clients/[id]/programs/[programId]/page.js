@@ -32,7 +32,7 @@ const dayName = (n) => DAY_NAMES[n - 1] || `Day ${n}`;
 // ============================================================================
 // Exercise picker context + equipment matching
 // ============================================================================
-const ExercisePickerContext = createContext({ library: [], availableEquipment: new Set(), scanDone: false });
+const ExercisePickerContext = createContext({ library: [], availableEquipment: new Set(), scanDone: false, clientId: null });
 
 // Map free-text gym-scan equipment onto canonical tags.
 const EQUIP_KEYWORDS = {
@@ -153,31 +153,155 @@ export default function ProgramEditorPage() {
   const scanDone = Array.isArray(client?.equipment_list) && client.equipment_list.length > 0;
 
   return (
-    <ExercisePickerContext.Provider value={{ library, availableEquipment, scanDone }}>
-      <div className="p-6 sm:p-8 max-w-5xl">
+    <ExercisePickerContext.Provider value={{ library, availableEquipment, scanDone, clientId }}>
+      <div className="p-6 sm:p-8 max-w-7xl">
         <Breadcrumb client={client} program={program} clientId={clientId} />
-        <ProgramHeader
-          program={program}
-          sessionCount={sessions.length}
-          onChange={refresh}
-        />
-        {program.status === 'active' && (
-          <div className="mb-6 flex items-center gap-2 bg-[#0F8A5F]/10 border border-[#0F8A5F]/30 rounded-[6px] px-4 py-2.5">
-            <span className="w-2 h-2 rounded-full bg-[#0F8A5F] flex-shrink-0" />
-            <p className="font-['Inter'] text-[12px] text-[#0A2540]">
-              <span className="font-bold">Live programme</span> — edits here push straight to
-              {client?.name ? ` ${client.name.split(' ')[0]}'s` : " the athlete's"} plan and PAX.
-              {liveFlash && <span className="font-semibold text-[#0F8A5F]"> Saved — live plan updated.</span>}
-            </p>
+        <div className="xl:grid xl:grid-cols-[minmax(0,1fr)_300px] xl:gap-8 xl:items-start">
+          <div className="min-w-0">
+            <ProgramHeader
+              program={program}
+              sessionCount={sessions.length}
+              onChange={refresh}
+            />
+            {program.status === 'active' && (
+              <div className="mb-6 flex items-center gap-2 bg-[#0F8A5F]/10 border border-[#0F8A5F]/30 rounded-[6px] px-4 py-2.5">
+                <span className="w-2 h-2 rounded-full bg-[#0F8A5F] flex-shrink-0" />
+                <p className="font-['Inter'] text-[12px] text-[#0A2540]">
+                  <span className="font-bold">Live programme</span> — edits here push straight to
+                  {client?.name ? ` ${client.name.split(' ')[0]}'s` : " the athlete's"} plan and PAX.
+                  {liveFlash && <span className="font-semibold text-[#0F8A5F]"> Saved — live plan updated.</span>}
+                </p>
+              </div>
+            )}
+            <SessionsSection
+              programId={programId}
+              sessions={sessions}
+              onChange={refresh}
+            />
           </div>
-        )}
-        <SessionsSection
-          programId={programId}
-          sessions={sessions}
-          onChange={refresh}
-        />
+          <AthleteContextRail clientId={clientId} clientName={client?.name} />
+        </div>
       </div>
     </ExercisePickerContext.Provider>
+  );
+}
+
+// ============================================================================
+// Athlete context rail — the athlete's momentum in view while programming:
+// 14-day pact streak, recent wins, active pacts. Read-only; links to the hub.
+// ============================================================================
+function AthleteContextRail({ clientId, clientName }) {
+  const [ctx, setCtx] = useState(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    if (!clientId) return;
+    let cancelled = false;
+    fetch(`/api/clients/${clientId}/coach-context`, { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((j) => { if (!cancelled) setCtx(j); })
+      .catch(() => { if (!cancelled) setFailed(true); });
+    return () => { cancelled = true; };
+  }, [clientId]);
+
+  if (failed) return null;
+  const firstName = (clientName || '').split(' ')[0] || 'Athlete';
+
+  const streak = Array.isArray(ctx?.streak) ? ctx.streak : [];
+  const wins = Array.isArray(ctx?.wins) ? ctx.wins : [];
+  const pacts = Array.isArray(ctx?.pacts) ? ctx.pacts : [];
+  const kept = streak.filter((d) => d.status === 'won').length;
+
+  const cellColor = (s) =>
+    s === 'won' ? '#0F8A5F' : s === 'partial' ? '#D97706' : s ? '#D92D20' : '#E2E6EB';
+
+  return (
+    <aside className="hidden xl:block sticky top-6 space-y-4">
+      <div className="bg-white border border-[#E2E6EB] rounded-[8px] p-4">
+        <div className="flex items-center justify-between mb-1">
+          <h3 className="font-['Montserrat'] font-bold text-[11px] text-[#0A2540] uppercase tracking-[1.5px]">
+            {firstName}'s momentum
+          </h3>
+          <Link
+            href={`/dashboard/clients/${clientId}`}
+            className="font-['Inter'] text-[10px] font-semibold uppercase tracking-[1px] text-[#D92D20] hover:text-[#B0241A]"
+          >
+            Hub →
+          </Link>
+        </div>
+        <p className="font-['Inter'] text-[11px] text-[#8A95A3] mb-3">
+          {!ctx ? 'Loading…' : streak.length
+            ? `${kept} of ${streak.length} pact days kept · last 14 days`
+            : 'No pact days logged in the last 14 days'}
+        </p>
+        {streak.length > 0 && (
+          <div className="flex gap-1 flex-wrap mb-1">
+            {streak.map((d, i) => (
+              <span
+                key={i}
+                title={`${d.date}: ${d.wins_completed ?? 0}/${d.total_wins ?? 0} wins (${d.status || '—'})`}
+                className="w-4 h-4 rounded-[3px] inline-block"
+                style={{ background: cellColor(d.status) }}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {ctx?.weekly && (
+        <div className="bg-white border border-[#E2E6EB] rounded-[8px] p-4">
+          <h3 className="font-['Montserrat'] font-bold text-[11px] text-[#0A2540] uppercase tracking-[1.5px] mb-2">
+            This week's pact
+          </h3>
+          <p className="font-['Inter'] text-[13px] text-[#0A2540] leading-snug">{ctx.weekly.pact_name}</p>
+          <p className="font-['Inter'] text-[11px] text-[#8A95A3] mt-1">
+            Score {ctx.weekly.pact_score ?? '—'} · {ctx.weekly.status || 'in play'}
+          </p>
+        </div>
+      )}
+
+      <div className="bg-white border border-[#E2E6EB] rounded-[8px] p-4">
+        <h3 className="font-['Montserrat'] font-bold text-[11px] text-[#0A2540] uppercase tracking-[1.5px] mb-2">
+          Active pacts · {pacts.length}
+        </h3>
+        {pacts.length === 0 ? (
+          <p className="font-['Inter'] text-[11px] text-[#8A95A3]">None set.</p>
+        ) : (
+          <ul className="space-y-2">
+            {pacts.slice(0, 5).map((p, i) => (
+              <li key={i} className="font-['Inter'] text-[12px] text-[#0A2540] leading-snug flex gap-2">
+                <span className="text-[#D92D20] font-bold flex-shrink-0">·</span>
+                <span className="min-w-0">
+                  {p.name}
+                  <span className="text-[#8A95A3]"> — streak {p.current_streak ?? 0}{p.created_by === 'athlete' ? ' · their own' : ''}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <div className="bg-white border border-[#E2E6EB] rounded-[8px] p-4">
+        <h3 className="font-['Montserrat'] font-bold text-[11px] text-[#0A2540] uppercase tracking-[1.5px] mb-2">
+          Recent wins · 14d
+        </h3>
+        {wins.length === 0 ? (
+          <p className="font-['Inter'] text-[11px] text-[#8A95A3]">Nothing logged yet.</p>
+        ) : (
+          <ul className="space-y-2">
+            {wins.slice(0, 5).map((w, i) => (
+              <li key={i} className="font-['Inter'] text-[12px] text-[#0A2540] leading-snug flex gap-2">
+                <span className="w-4 h-4 bg-[#0F8A5F] text-white rounded-[3px] grid place-items-center flex-shrink-0 text-[9px] font-bold">★</span>
+                <span className="min-w-0">
+                  {w.description || `${(w.pact_type || 'pact').replace(/_/g, ' ')} kept`}
+                  <span className="text-[#8A95A3]"> · {new Date(w.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </aside>
   );
 }
 
@@ -220,7 +344,28 @@ function ProgramHeader({ program, sessionCount, onChange }) {
   const [deleteConfirming, setDeleteConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState(null);
+  const [savingTpl, setSavingTpl] = useState(false);
   const router = useRouter();
+
+  // Snapshot this programme (sessions + exercises) into the template library.
+  async function saveAsTemplate() {
+    if (savingTpl) return;
+    setSavingTpl(true);
+    try {
+      const res = await fetch('/api/templates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ program_id: program.id }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || 'Could not save the template.');
+      setFlash({ tone: 'ok', text: `Saved to your template library as "${d.template?.name || program.name}".` });
+    } catch (err) {
+      setFlash({ tone: 'warn', text: `Template not saved: ${err.message}` });
+    } finally {
+      setSavingTpl(false);
+    }
+  }
 
   // Auto-cancel archive confirm after 3s of no interaction
   useEffect(() => {
@@ -315,14 +460,24 @@ function ProgramHeader({ program, sessionCount, onChange }) {
         <h1 className="font-['Montserrat'] font-extrabold text-3xl sm:text-4xl text-[#0A2540] uppercase tracking-tight leading-none">
           {program.name}
         </h1>
-        <button
-          onClick={() => setMode('edit')}
-          className="inline-flex items-center gap-1.5 font-['Inter'] font-semibold text-[11px] text-[#0A2540] hover:text-[#D92D20] uppercase tracking-[0.4px] px-2 py-1 transition-colors"
-          aria-label="Edit programme details"
-        >
-          <EditIcon />
-          Edit details
-        </button>
+        <div className="flex items-center gap-1 flex-shrink-0">
+          <button
+            onClick={saveAsTemplate}
+            disabled={savingTpl}
+            title="Snapshot this programme (sessions + exercises) into your template library"
+            className="inline-flex items-center gap-1.5 font-['Inter'] font-semibold text-[11px] text-[#0A2540] hover:text-[#D92D20] disabled:opacity-40 uppercase tracking-[0.4px] px-2 py-1 transition-colors"
+          >
+            {savingTpl ? 'Saving…' : 'Save as template'}
+          </button>
+          <button
+            onClick={() => setMode('edit')}
+            className="inline-flex items-center gap-1.5 font-['Inter'] font-semibold text-[11px] text-[#0A2540] hover:text-[#D92D20] uppercase tracking-[0.4px] px-2 py-1 transition-colors"
+            aria-label="Edit programme details"
+          >
+            <EditIcon />
+            Edit details
+          </button>
+        </div>
       </div>
 
       <div className="flex items-center gap-3 flex-wrap text-[12px] font-['Inter'] text-[#8A95A3] mb-4">
@@ -1298,13 +1453,30 @@ function ExerciseForm({ mode, session, exercise, onCancel, onDone }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
 
-  const { library, availableEquipment, scanDone } = useContext(ExercisePickerContext);
+  const { library, availableEquipment, scanDone, clientId } = useContext(ExercisePickerContext);
   const [equipmentNeeded, setEquipmentNeeded] = useState(
     isEdit && Array.isArray(exercise.equipment_needed) ? exercise.equipment_needed : []
   );
   const [pickerOpen, setPickerOpen] = useState(false);
   const [overrideEquip, setOverrideEquip] = useState(false);
   const [creatingCustom, setCreatingCustom] = useState(false);
+
+  // Exercise history — what this athlete actually did last time(s) with this
+  // exercise, so loads are set from data, not memory. Debounced on the name.
+  const [history, setHistory] = useState(null); // null | 'loading' | []
+  useEffect(() => {
+    const q = name.trim();
+    if (!clientId || q.length < 3) { setHistory(null); return; }
+    let cancelled = false;
+    setHistory('loading');
+    const t = setTimeout(() => {
+      fetch(`/api/clients/${clientId}/exercise-history?name=${encodeURIComponent(q)}`, { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((j) => { if (!cancelled) setHistory(Array.isArray(j.history) ? j.history : []); })
+        .catch(() => { if (!cancelled) setHistory([]); });
+    }, 450);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [name, clientId]);
 
   const missing = scanDone ? missingEquipment(equipmentNeeded, availableEquipment) : [];
 
@@ -1442,6 +1614,25 @@ function ExerciseForm({ mode, session, exercise, onCancel, onDone }) {
                 </span>
               );
             })}
+          </div>
+        )}
+
+        {Array.isArray(history) && history.length > 0 && (
+          <div className="mt-2 bg-white border-l-[3px] border-[#0A2540] rounded-[0_4px_4px_0] px-3 py-2">
+            <div className="font-['Inter'] text-[9px] font-bold uppercase tracking-[1.2px] text-[#8A95A3] mb-1">
+              Last time{history.length > 1 ? 's' : ''} — logged sets
+            </div>
+            <ul className="space-y-0.5">
+              {history.map((h, i) => (
+                <li key={i} className="font-['Inter'] text-[12px] text-[#0A2540] tabular-nums">
+                  <span className="text-[#8A95A3]">
+                    {new Date(h.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} —{' '}
+                  </span>
+                  {h.sets.map((s) => `${s.weight != null ? `${s.weight}kg` : 'BW'}×${s.reps ?? '—'}`).join(', ')}
+                  {h.top_set?.rpe != null && <span className="text-[#8A95A3]"> @ RPE {h.top_set.rpe}</span>}
+                </li>
+              ))}
+            </ul>
           </div>
         )}
       </div>
