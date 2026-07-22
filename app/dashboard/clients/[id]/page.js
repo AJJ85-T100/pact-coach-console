@@ -696,13 +696,15 @@ export default async function ClientDetailPage({ params }) {
           <div className="lg:sticky lg:top-6">
             <div className="bg-white rounded-lg shadow-card border border-border flex flex-col" style={{ maxHeight: 'calc(100vh - 3rem)' }}>
               <h3 className="font-display font-bold text-blue text-[11px] uppercase tracking-[0.15em] px-5 py-4 border-b border-border flex-shrink-0">
-                PAX conversation · {messages.length} message{messages.length === 1 ? '' : 's'}
+                PAX conversation · {messages.length} message{messages.length === 1 ? '' : 's'} <span className="normal-case font-normal text-muted tracking-normal">· newest first</span>
               </h3>
               {messages.length === 0 ? (
                 <div className="p-5 text-muted text-xs">No messages yet.</div>
               ) : (
                 <div className="flex flex-col gap-2.5 p-4 overflow-y-auto scroll-thin flex-1">
-                  {messages.slice().reverse().map((m, i) => {
+                  {/* Newest at the TOP — the coach reads the latest exchange
+                      without scrolling; history continues downward. */}
+                  {messages.map((m, i) => {
                     const isUser = m.role === 'user';
                     return (
                       <div key={i} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
