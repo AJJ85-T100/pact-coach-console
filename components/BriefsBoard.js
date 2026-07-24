@@ -671,6 +671,7 @@ function AppointmentBlock({ clientId, workoutDays }) {
   const [list, setList] = useState(null);
   const [when, setWhen] = useState('');
   const [busy, setBusy] = useState(false);
+  const [calNote, setCalNote] = useState(null);   // where the last scheduled session landed
 
   async function load() {
     try {
@@ -691,12 +692,16 @@ function AppointmentBlock({ clientId, workoutDays }) {
   async function schedule() {
     if (!when) return;
     setBusy(true);
+    setCalNote(null);
     try {
-      await fetch('/api/appointments', {
+      const r = await fetch('/api/appointments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ clientId, scheduledAt: new Date(when).toISOString() }),
       });
+      const j = await r.json().catch(() => ({}));
+      if (j.calendar === 'google') setCalNote('Added to your Google Calendar');
+      else if (j.calendar === 'ics') setCalNote('Calendar invite emailed to you');
       await load();
     } catch {}
     setBusy(false);
@@ -744,6 +749,10 @@ function AppointmentBlock({ clientId, workoutDays }) {
           {busy ? 'Saving…' : 'Schedule'}
         </button>
       </div>
+
+      {calNote && (
+        <div className="mt-2 font-['Inter'] text-[11px] text-[#12805C]">✓ {calNote}</div>
+      )}
 
       {list && list.length > 1 && (
         <div className="mt-3 space-y-1.5">

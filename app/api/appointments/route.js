@@ -13,6 +13,7 @@ import { NextResponse } from 'next/server';
 import { unstable_noStore as noStore } from 'next/cache';
 import { supabaseAdmin as supabase } from '@/lib/supabase/admin';
 import { requireClientAccess } from '@/lib/auth/requireClientAccess';
+import { sendCoachCalendarEvent } from '@/lib/bot/calendar';
 
 export const dynamic = 'force-dynamic';
 
@@ -76,7 +77,27 @@ export async function POST(req) {
     console.error('[appointments] insert failed', error);
     return NextResponse.json({ error: 'Could not schedule appointment.' }, { status: 500 });
   }
-  return NextResponse.json({ appointment: data }, { status: 201, headers: { 'Cache-Control': 'no-store' } });
+
+  // Into the coach's diary: Google Calendar if they've connected it, an
+  // emailed .ics invite if not. Non-fatal — the appointment stands either way.
+  let calendar = null;
+  const calRes = await sendCoachCalendarEvent({
+    action: 'create',
+    coach_id: access.pt.id,
+    client_name: access.client.name,
+    appointment_id: data.id,
+    start: data.scheduled_at,
+    duration_mins: 60,
+    note,
+  });
+  if (calRes?.ok) {
+    calendar = calRes.method;
+    await supabase.from('appointments')
+      .update({ google_event_id: calRes.event_id || null, calendar_method: calRes.method })
+      .eq('id', data.id);
+  }
+
+  return NextResponse.json({ appointment: data, calendar }, { status: 201, headers: { 'Cache-Control': 'no-store' } });
 }
 
 export async function DELETE(req) {
@@ -86,7 +107,9 @@ export async function DELETE(req) {
 
   // Ownership chain: appointment -> client -> this coach.
   const { data: appt } = await supabase
-    .from('appointments').select('client_id').eq('id', id).maybeSingle();
+    .from('appointments')
+    .select('client_id, scheduled_at, google_event_id, calendar_method')
+    .eq('id', id).maybeSingle();
   if (!appt) return NextResponse.json({ error: 'Not found.' }, { status: 404 });
   const access = await requireClientAccess(appt.client_id);
   if (access.error) return access.error;
@@ -96,5 +119,20 @@ export async function DELETE(req) {
     console.error('[appointments] cancel failed', error);
     return NextResponse.json({ error: 'Could not cancel.' }, { status: 500 });
   }
+
+  // Take it back out of the coach's diary (Google delete, or a CANCEL .ics
+  // email if the invite went by email). Non-fatal.
+  if (appt.calendar_method && appt.calendar_method !== 'none') {
+    await sendCoachCalendarEvent({
+      action: 'cancel',
+      coach_id: access.pt.id,
+      client_name: access.client.name,
+      appointment_id: id,
+      start: appt.scheduled_at,
+      duration_mins: 60,
+      event_id: appt.google_event_id || null,
+    });
+  }
+
   return NextResponse.json({ ok: true }, { headers: { 'Cache-Control': 'no-store' } });
 }

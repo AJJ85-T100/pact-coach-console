@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { createClient, createServiceClient } from '@/lib/supabase/server';
 import VoiceCalibration from '@/components/VoiceCalibration';
+import CalendarConnect from '@/components/CalendarConnect';
 
 /**
  * /dashboard/settings — coach settings, leading with voice calibration.
@@ -29,6 +30,14 @@ export default async function SettingsPage() {
         </p>
       </div>
       <VoiceCalibration initial={pt.voice_calibration} />
+
+      <div className="mt-10 mb-4">
+        <h2 className="font-display font-extrabold text-blue text-xl uppercase tracking-tight">Your calendar</h2>
+        <p className="text-muted text-sm mt-1.5 leading-relaxed max-w-xl">
+          Sessions you schedule on the Briefs board can go straight into your diary.
+        </p>
+      </div>
+      <CalendarConnect />
     </div>
   );
 }
