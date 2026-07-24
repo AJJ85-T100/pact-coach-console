@@ -5,10 +5,11 @@
  *
  * Templates are created from any programme via "Save as template" in the
  * editor, and loaded onto an athlete from the New Programme form. This page
- * lists, inspects and deletes them.
+ * lists, opens (→ /dashboard/templates/[id] to view/edit) and deletes them.
  */
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 
 export default function TemplatesPage() {
   const [templates, setTemplates] = useState(null);
@@ -59,8 +60,9 @@ export default function TemplatesPage() {
       <p className="text-xs font-semibold text-red tracking-[0.2em] uppercase mb-1">Build once, reuse</p>
       <h1 className="font-display font-extrabold text-blue text-3xl uppercase tracking-tight mb-1">Templates</h1>
       <p className="text-body text-sm mb-8">
-        Your reusable programme blocks. Save any programme as a template from its editor, then load it
+        Your reusable programme blocks. Open one to view or edit the master copy, then load it
         onto an athlete from their <span className="font-semibold">New programme</span> form and tailor from there.
+        Template edits apply to future assignments only.
       </p>
 
       {error && (
@@ -86,7 +88,12 @@ export default function TemplatesPage() {
           {templates.map((t) => (
             <li key={t.id} className="bg-white rounded-lg shadow-card border border-border p-5 flex items-center justify-between gap-4 flex-wrap">
               <div className="min-w-0">
-                <div className="font-display font-bold text-blue text-base truncate">{t.name}</div>
+                <Link
+                  href={`/dashboard/templates/${t.id}`}
+                  className="font-display font-bold text-blue text-base truncate hover:text-red transition-colors block"
+                >
+                  {t.name}
+                </Link>
                 <div className="text-[11px] text-muted tracking-wide mt-1">
                   {t.week_span > 0 && <>{t.week_span} week{t.week_span === 1 ? '' : 's'} of sessions · </>}
                   {t.session_count} session{t.session_count === 1 ? '' : 's'} · {t.exercise_count} exercise{t.exercise_count === 1 ? '' : 's'}
@@ -96,6 +103,12 @@ export default function TemplatesPage() {
                 {t.notes && <p className="text-[12px] text-body mt-1.5 line-clamp-2">{t.notes}</p>}
               </div>
               <div className="flex items-center gap-2 flex-shrink-0">
+                <Link
+                  href={`/dashboard/templates/${t.id}`}
+                  className="text-[11px] font-bold uppercase tracking-wider px-3 py-1.5 bg-bg text-blue rounded hover:bg-border transition-colors"
+                >
+                  View / Edit
+                </Link>
                 {confirmId === t.id ? (
                   <>
                     <span className="text-[11px] font-semibold uppercase tracking-wider text-blue">Delete?</span>
