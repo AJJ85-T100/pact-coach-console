@@ -91,7 +91,7 @@ export default async function ClientDetailPage({ params }) {
     msgsR, slipsR, pactsR, healthR, weighR, liftsR,
     customPactsR, weeklyPactR, weekendPactR,
     stakesR, cosignersR, winStackR, moodR,
-    progsR,
+    progsR, terraR,
   ] = await Promise.all([
     // Conversation history (last 30)
     service.from('conversations')
@@ -189,6 +189,12 @@ export default async function ClientDetailPage({ params }) {
       .eq('client_id', client.id)
       .neq('status', 'archived')
       .order('updated_at', { ascending: false }),
+
+    // Connected wearables (Terra) — devices + when data last landed
+    service.from('terra_connections')
+      .select('provider, status, connected_at, last_event_at, last_event_type, revoked_at')
+      .eq('client_id', client.id)
+      .order('connected_at', { ascending: true }),
   ]);
 
   // ============================================================
@@ -208,6 +214,7 @@ export default async function ClientDetailPage({ params }) {
   const wins        = winStackR.data || [];
   const mood        = moodR.data?.[0] || null;
   const programmes  = progsR.data || [];
+  const devices     = terraR.data || [];   // gracefully [] until the migration runs
 
   // Current weight: prefer latest weigh_in over (possibly stale) clients.current_weight
   const currentWeight = lastWeigh?.weight ?? client.current_weight;
@@ -510,6 +517,43 @@ export default async function ClientDetailPage({ params }) {
               </div>
             ) : (
               <p className="text-muted text-xs">No health data yet today.</p>
+            )}
+          </Card>
+
+          <Card title="Connected devices">
+            {devices.length === 0 ? (
+              <p className="text-muted text-xs">
+                No wearable connected yet — {firstName} can connect Garmin, Oura, Whoop &amp; more
+                from the app&apos;s Settings, and activity will land here automatically.
+              </p>
+            ) : (
+              <ul className="divide-y divide-border">
+                {devices.map((d, i) => {
+                  const label = d.provider
+                    ? d.provider.charAt(0) + d.provider.slice(1).toLowerCase()
+                    : 'Device';
+                  const chip =
+                    d.status === 'revoked' ? ['Disconnected', 'bg-bg text-muted'] :
+                    d.status === 'error'   ? ['Attention',    'bg-red/10 text-red'] :
+                                             ['Connected',    'bg-emerald-50 text-emerald-700'];
+                  const landed = d.last_event_at
+                    ? `data landed ${timeAgo(d.last_event_at)}${d.last_event_type ? ` (${d.last_event_type})` : ''}`
+                    : d.status === 'revoked'
+                      ? `disconnected ${d.revoked_at ? timeAgo(d.revoked_at) : ''}`.trim()
+                      : 'no data landed yet';
+                  return (
+                    <li key={i} className="flex items-center justify-between gap-3 py-2.5 first:pt-0 last:pb-0">
+                      <div className="min-w-0">
+                        <div className="text-sm font-bold text-blue">{label}</div>
+                        <div className="text-[11px] text-muted">{landed}</div>
+                      </div>
+                      <span className={`text-[10px] font-bold tracking-[0.12em] uppercase px-2 py-1 rounded ${chip[1]}`}>
+                        {chip[0]}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
             )}
           </Card>
 
