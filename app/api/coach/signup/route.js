@@ -14,8 +14,12 @@ import { createServiceClient } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
 
-// Hard-coded pilot gate (per Alex). Change this string to rotate the code.
-const SIGNUP_CODE = 'PACT-PILOT-2026';
+// Pilot gate. Moved out of source (review M11) — a hard-coded constant can't
+// be rotated without a deploy, and 'PACT-PILOT-<year>' is guessable by shape.
+// Set SIGNUP_CODE on Vercel; the literal remains only as a fallback so an
+// unset var doesn't lock out signups mid-pilot.
+// (Verified: this value is server-only and never reached the client bundle.)
+const SIGNUP_CODE = process.env.SIGNUP_CODE || 'PACT-PILOT-2026';
 
 const clean = (v, max = 120) => (v ?? '').toString().trim().slice(0, max);
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
@@ -40,10 +44,19 @@ export async function POST(req) {
   const service = createServiceClient();
 
   // Already a coach on this email?
+  // ⚠️ Returns the SAME response as a successful signup (review M11). The old
+  // 409-vs-200 split was a clean email-enumeration oracle over the coach base
+  // for anyone holding the gate code. The genuine owner still gets in — they
+  // receive a sign-in link, which is what the 409 copy told them to do anyway.
   const { data: existing } = await service
     .from('personal_trainers').select('id').eq('email', email).maybeSingle();
   if (existing) {
-    return NextResponse.json({ error: 'A coach account already exists for that email — just sign in.' }, { status: 409 });
+    try {
+      await service.auth.admin.generateLink({ type: 'magiclink', email });
+    } catch (e) {
+      console.warn('[coach/signup] sign-in link for existing coach failed', e?.message);
+    }
+    return NextResponse.json({ ok: true, existing: false });
   }
 
   // Create (or find) the Supabase auth user.

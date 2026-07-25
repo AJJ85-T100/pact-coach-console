@@ -9,7 +9,7 @@ import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 export default function CoachSignupPage() {
   const [form, setForm] = useState({ name: '', business_name: '', email: '', whatsapp_number: '', code: '' });
   const [state, setState] = useState('idle');
-  const [doneTitle, setDoneTitle] = useState('Account created 🎉');
+  const [doneTitle, setDoneTitle] = useState('Check your email');
   const [err, setErr] = useState('');
   const submitting = useRef(false); // hard double-submit guard (Enter + click race)
 
@@ -67,21 +67,18 @@ export default function CoachSignupPage() {
     }
 
     if (!res.ok) {
-      if (res.status === 409) {
-        // Account already exists for this login — don't dead-end them, just
-        // email a sign-in link (it only lands in the owner's inbox, so safe).
-        await sendLoginLink();
-        setDoneTitle('You already have an account');
-        setState('done');
-        submitting.current = false;
-        return;
-      }
       setErr(d.error || 'Something went wrong.'); setState('idle'); submitting.current = false; return;
     }
 
-    // Fresh account — email them a magic link into the console.
+    // Email them a magic link into the console.
+    //
+    // Deliberately identical whether or not an account already existed
+    // (security review M11): the old 409 branch told anyone holding the
+    // signup code exactly which email addresses were coaches. Either way a
+    // link lands in the real owner's inbox, so nobody is dead-ended — and
+    // the copy is honest for both cases.
     await sendLoginLink();
-    setDoneTitle('Account created 🎉');
+    setDoneTitle('Check your email');
     setState('done');
     submitting.current = false;
   }

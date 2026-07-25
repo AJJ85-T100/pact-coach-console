@@ -13,7 +13,7 @@
 
 import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
-import { requireCoach, tokenValidOrUsed } from '@/lib/auth/requireCoach';
+import { requireCoach, tokenMatchesClient } from '@/lib/auth/requireCoach';
 
 // Allow up to 30s for the vision call — Claude Vision typically takes 5-15s
 // on a single image, this gives headroom for network/queue variance.
@@ -41,12 +41,18 @@ Return ONLY a JSON object with this exact structure, no markdown fences, no expl
 const VALID_MEDIA_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 
 export async function POST(req) {
-  // Auth: a signed-in coach, or an invite token (the athlete's credential
-  // during onboarding — pass ?token=... on the request URL).
+  // ⚠️ AUTH (security review, M8). This accepted ANY invite token via
+  // tokenValidOrUsed() — which returns true for any row that is used or
+  // in date, and used_at is set forever. So every athlete who ever onboarded
+  // held a permanent credential for an uncapped Claude Vision call, on a
+  // route with maxDuration 30 and a 1568px image. The token must be bound to
+  // a specific client, like every other athlete-invoked endpoint here.
   const coach = await requireCoach();
   if (coach.error) {
-    const t = new URL(req.url).searchParams.get('token');
-    if (!(t && await tokenValidOrUsed(t))) {
+    const url = new URL(req.url);
+    const t = url.searchParams.get('token');
+    const clientId = url.searchParams.get('clientId');
+    if (!(t && clientId && await tokenMatchesClient(clientId, t))) {
       return NextResponse.json({ error: 'Unauthorised.' }, { status: 401 });
     }
   }
