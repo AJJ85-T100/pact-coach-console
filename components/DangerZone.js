@@ -44,6 +44,14 @@ export default function DangerZone({ clientId, clientName }) {
       });
       const j = await res.json();
       if (!res.ok) throw new Error(j.error || 'Delete failed.');
+      // The route now returns a per-step receipt. A partial erase used to
+      // report plain success, and once the clients row was gone there was
+      // no way to find what had been left behind.
+      if (j.complete === false) {
+        throw new Error(
+          `Partly erased. These steps failed and need a manual check: ${(j.failed_steps || []).join(', ')}`
+        );
+      }
       router.push('/dashboard/athletes');
       router.refresh();
     } catch (e) {
@@ -55,6 +63,20 @@ export default function DangerZone({ clientId, clientName }) {
   return (
     <div className="border border-red/25 rounded-lg p-5 mt-6">
       <h3 className="font-display font-extrabold text-red text-xs uppercase tracking-wide mb-3">Danger zone</h3>
+
+      {/* Subject-access / portability (UK GDPR Art 15 + 20). Until this
+          existed, the privacy policy offered these rights with nothing
+          behind them. */}
+      <div className="flex items-center justify-between gap-4 py-2 border-b border-border mb-2 pb-3">
+        <div>
+          <div className="text-sm font-semibold text-blue">Export their data</div>
+          <div className="text-xs text-muted mt-0.5">Everything PACT holds about {clientName}, as JSON. Send it to them if they ask what you have on file.</div>
+        </div>
+        <a href={`/api/clients/${clientId}/export`} download
+          className="flex-shrink-0 text-[11px] font-semibold uppercase tracking-wider text-blue border border-border rounded px-3.5 py-2 hover:border-blue transition-colors">
+          Export
+        </a>
+      </div>
 
       <div className="flex items-center justify-between gap-4 py-2">
         <div>
@@ -71,7 +93,7 @@ export default function DangerZone({ clientId, clientName }) {
         <div className="flex items-center justify-between gap-4">
           <div>
             <div className="text-sm font-semibold text-blue">Delete permanently</div>
-            <div className="text-xs text-muted mt-0.5">Erases the athlete and all their data — conversations, pacts, health history. Cannot be undone.</div>
+            <div className="text-xs text-muted mt-0.5">Erases the athlete and everything we hold — conversations, pacts, health and wearable history, workout logs, form-check videos, their sign-in. Cannot be undone. Export first if they might want a copy.</div>
           </div>
           {!erasing && (
             <button onClick={() => setErasing(true)} disabled={busy}
