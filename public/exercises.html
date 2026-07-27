@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Exercise library · PACT.Health</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Montserrat:wght@800;900&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#0A2540; --drive:#D92D20; --white:#FFF;
+    --ground:#F4F6F8; --hair:#DDE3E9; --muted:#5B6B7B;
+    --pad:16px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif;
+    color:var(--ink); background:var(--white);
+    font-size:15px; line-height:1.5;
+    padding-bottom:env(safe-area-inset-bottom);
+  }
+  :focus-visible{outline:2px solid var(--drive); outline-offset:2px}
+
+  header{
+    padding:var(--pad); border-bottom:1px solid var(--hair);
+    position:sticky; top:0; background:var(--white); z-index:10;
+  }
+  .mark{display:flex; align-items:baseline; gap:8px; margin-bottom:12px}
+  .mark b{
+    font-family:Montserrat,sans-serif; font-weight:900; font-size:15px;
+    letter-spacing:.06em; text-transform:uppercase;
+  }
+  .mark span{font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted)}
+
+  #q{
+    width:100%; padding:10px 12px; border:1px solid var(--hair);
+    font-family:inherit; font-size:15px; color:var(--ink); background:var(--white);
+  }
+  #q::placeholder{color:var(--muted)}
+
+  .filters{display:flex; gap:6px; overflow-x:auto; margin-top:10px; padding-bottom:2px; scrollbar-width:none}
+  .filters::-webkit-scrollbar{display:none}
+  .chip{
+    flex:0 0 auto; padding:6px 11px; border:1px solid var(--hair);
+    background:var(--white); color:var(--muted);
+    font-family:inherit; font-size:11px; font-weight:600;
+    letter-spacing:.08em; text-transform:uppercase; cursor:pointer; white-space:nowrap;
+  }
+  .chip[aria-pressed="true"]{background:var(--ink); border-color:var(--ink); color:var(--white)}
+
+  .count{padding:12px var(--pad) 0; font-size:12px; color:var(--muted)}
+
+  .grid{
+    display:grid; grid-template-columns:repeat(2,1fr); gap:1px;
+    background:var(--hair); border-top:1px solid var(--hair); margin-top:12px;
+  }
+  @media(min-width:560px){.grid{grid-template-columns:repeat(3,1fr)}}
+  @media(min-width:860px){.grid{grid-template-columns:repeat(5,1fr)}}
+
+  .card{
+    background:var(--white); border:0; padding:0; text-align:left;
+    font-family:inherit; color:inherit; cursor:pointer; display:block; width:100%;
+  }
+  .card .fig{aspect-ratio:1; background:var(--ground); display:block; width:100%; object-fit:contain}
+  .card .none{
+    aspect-ratio:1; background:var(--ground); display:grid; place-items:center;
+    font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted);
+  }
+  .card .meta{padding:10px 12px 14px; border-top:3px solid transparent}
+  .card.t1 .meta{border-top-color:var(--drive)}
+  .card h2{font-size:13px; font-weight:600; line-height:1.35}
+  .card p{font-size:11px; color:var(--muted); margin-top:3px; letter-spacing:.04em; text-transform:uppercase}
+
+  .empty{padding:48px var(--pad); text-align:center; color:var(--muted); font-size:14px}
+
+  dialog{
+    border:0; padding:0; width:100%; max-width:520px; background:var(--white);
+    color:var(--ink); margin:auto;
+  }
+  dialog::backdrop{background:rgba(10,37,64,.72)}
+  .sheet-fig{width:100%; aspect-ratio:1; background:var(--ground); object-fit:contain; display:block}
+  .sheet-body{padding:var(--pad)}
+  .sheet-body h2{font-family:Montserrat,sans-serif; font-weight:800; font-size:19px; line-height:1.2}
+  .tags{display:flex; flex-wrap:wrap; gap:6px; margin:12px 0}
+  .tag{
+    font-size:11px; font-weight:600; letter-spacing:.08em; text-transform:uppercase;
+    padding:4px 8px; background:var(--ground); color:var(--muted);
+  }
+  .tag.t1{background:var(--drive); color:var(--white)}
+  .sheet-body .desc{font-size:14px; color:var(--muted); margin-top:4px}
+  .review{margin-top:16px; padding-top:12px; border-top:1px solid var(--hair); font-size:11px; color:var(--muted)}
+  .close{
+    margin-top:16px; width:100%; padding:12px; border:1px solid var(--ink);
+    background:var(--ink); color:var(--white);
+    font-family:inherit; font-size:12px; font-weight:600;
+    letter-spacing:.08em; text-transform:uppercase; cursor:pointer;
+  }
+  @media(prefers-reduced-motion:no-preference){
+    .card .fig{transition:opacity .15s}
+    .card:hover .fig{opacity:.82}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="mark"><b>PACT<span style="color:var(--drive)">.</span>HEALTH</b><span>Exercise library</span></div>
+  <input id="q" type="search" placeholder="Search movements" aria-label="Search movements">
+  <div class="filters" id="filters" role="group" aria-label="Filter by movement pattern"></div>
+</header>
+
+<p class="count" id="count" role="status"></p>
+<div class="grid" id="grid"></div>
+
+<dialog id="sheet" aria-labelledby="sheet-title">
+  <img class="sheet-fig" id="sheet-fig" alt="">
+  <div class="sheet-body">
+    <h2 id="sheet-title"></h2>
+    <p class="desc" id="sheet-desc"></p>
+    <div class="tags" id="sheet-tags"></div>
+    <p class="review" id="sheet-review"></p>
+    <button class="close" onclick="document.getElementById('sheet').close()">Close</button>
+  </div>
+</dialog>
+
+<script>
+const SUPABASE_URL = 'https://rwmmtqchrnlpnjzkrjwg.supabase.co';   // https://<ref>.supabase.co
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJ3bW10cWNocm5scG5qemtyandnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY3NjU1ODgsImV4cCI6MjA5MjM0MTU4OH0.kX-YPlwUGNacOz02van4C0ztVukTvfrG9Lxd02V00gc';
+
+const DEMO = [
+  {name:'Back Squat', slug:'barbell-back-squat', primary_muscle_label:'Quads · Glutes', equipment:['barbell'], movement_pattern:'squat pattern', tier:1},
+  {name:'Romanian Deadlift', slug:'romanian-deadlift', primary_muscle_label:'Hamstrings', equipment:['barbell'], movement_pattern:'hip hinge', tier:1},
+  {name:'Push-Up', slug:'push-up', primary_muscle_label:'Chest', equipment:['bodyweight'], movement_pattern:'horizontal push', tier:1},
+  {name:'Sumo Deadlift', slug:'sumo-deadlift', primary_muscle_label:'Glutes · Hams', equipment:['barbell'], movement_pattern:'hip hinge', tier:1}
+];
+
+let all = [], cards = {}, pattern = null, term = '';
+
+const thumbOf = url => url ? url.replace('.card.webp', '.thumb.webp') : null;
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+async function api(path) {
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+    headers: {apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`}
+  });
+  if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+  return r.json();
+}
+
+async function boot() {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    all = DEMO;
+    document.getElementById('count').textContent =
+      'Demo data — add SUPABASE_URL and SUPABASE_ANON_KEY to show the real library.';
+  } else {
+    try {
+      const [ex, cd] = await Promise.all([
+        api('exercises?select=id,name,slug,primary_muscle_label,equipment,movement_pattern,tier&is_active=eq.true&order=name.asc&limit=1000'),
+        api('v_exercise_cards?select=exercise_id,image_url,alt_text&order=sort_order.asc')
+      ]);
+      all = ex;
+      for (const c of cd) if (!cards[c.exercise_id]) cards[c.exercise_id] = c;
+    } catch (e) {
+      document.getElementById('grid').innerHTML =
+        `<p class="empty">Could not load the library.<br>${esc(e.message)}</p>`;
+      return;
+    }
+  }
+  buildFilters();
+  render();
+}
+
+function buildFilters() {
+  const pats = [...new Set(all.map(e => e.movement_pattern).filter(Boolean))].sort();
+  const box = document.getElementById('filters');
+  box.innerHTML = '';
+  for (const p of ['All', ...pats]) {
+    const b = document.createElement('button');
+    b.className = 'chip';
+    b.textContent = p;
+    b.setAttribute('aria-pressed', p === 'All' ? 'true' : 'false');
+    b.onclick = () => {
+      pattern = p === 'All' ? null : p;
+      [...box.children].forEach(c => c.setAttribute('aria-pressed', String(c === b)));
+      render();
+    };
+    box.appendChild(b);
+  }
+}
+
+function visible() {
+  return all.filter(e =>
+    (!pattern || e.movement_pattern === pattern) &&
+    (!term || (e.name + ' ' + (e.primary_muscle_label || '')).toLowerCase().includes(term))
+  );
+}
+
+function render() {
+  const list = visible();
+  const withArt = list.filter(e => cards[e.id]).length;
+  document.getElementById('count').textContent =
+    `${list.length} movement${list.length === 1 ? '' : 's'} · ${withArt} with a demo`;
+
+  const grid = document.getElementById('grid');
+  if (!list.length) {
+    grid.innerHTML = '<p class="empty">Nothing matches that. Try a different word.</p>';
+    return;
+  }
+  grid.innerHTML = list.map((e, i) => {
+    const c = cards[e.id];
+    const fig = c
+      ? `<img class="fig" src="${esc(thumbOf(c.image_url))}" alt="${esc(c.alt_text)}" loading="lazy" width="480" height="480">`
+      : `<div class="none" aria-hidden="true">Demo coming soon</div>`;
+    return `<button class="card${e.tier === 1 ? ' t1' : ''}" data-i="${i}">
+      ${fig}
+      <div class="meta">
+        <h2>${esc(e.name)}</h2>
+        <p>${esc(e.primary_muscle_label || (e.equipment || []).join(' · ') || '—')}</p>
+      </div>
+    </button>`;
+  }).join('');
+  grid.querySelectorAll('.card').forEach(b =>
+    b.onclick = () => open(list[+b.dataset.i]));
+}
+
+function open(e) {
+  const c = cards[e.id];
+  const img = document.getElementById('sheet-fig');
+  if (c) {
+    img.src = c.image_url; img.alt = c.alt_text; img.style.display = 'block';
+  } else {
+    img.removeAttribute('src'); img.alt = ''; img.style.display = 'none';
+  }
+  document.getElementById('sheet-title').textContent = e.name;
+  document.getElementById('sheet-desc').textContent =
+    c ? c.alt_text : 'No demo yet for this movement. Your coach can still prescribe it.';
+  document.getElementById('sheet-tags').innerHTML = [
+    e.tier === 1 ? '<span class="tag t1">Tier 1</span>' : '',
+    e.primary_muscle_label ? `<span class="tag">${esc(e.primary_muscle_label)}</span>` : '',
+    ...(e.equipment || []).map(x => `<span class="tag">${esc(x)}</span>`),
+    e.movement_pattern ? `<span class="tag">${esc(e.movement_pattern)}</span>` : ''
+  ].join('');
+  document.getElementById('sheet-review').textContent =
+    c ? 'Illustrated — reviewed by your coach.' : '';
+  document.getElementById('sheet').showModal();
+}
+
+document.getElementById('q').addEventListener('input', ev => {
+  term = ev.target.value.trim().toLowerCase();
+  render();
+});
+
+boot();
+</script>
+</body>
+</html>
