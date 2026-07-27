@@ -33,15 +33,21 @@ const PUBLIC_EXACT = new Set([
   '/onboard',             // athlete wizard (invite-token gated)
   '/admin',               // has its own password + signed-cookie auth
   '/api/coach/signup',    // code-gated coach signup
-  '/api/terra/connect',   // athlete device connect during onboarding
-  '/api/gym-scan',        // onboarding gym photo scan (token gated)
 ]);
+// Removed 2026-07-25 (backlog 2b.3): /api/terra/connect and /api/gym-scan.
+// Both served the standalone /onboard/connect and /onboard/gym-scan
+// prototypes, which were never wired into the live wizard and were
+// superseded by the athlete app's Terra flow (bot /terra/session, which
+// authenticates with the athlete's own Supabase JWT). Deleting them retires
+// an uncapped Claude Vision endpoint and a wearable-connect endpoint
+// outright, rather than leaving them guarded — the smaller surface is the
+// better outcome.
 
 // Genuine subtrees. Keep the trailing slash — without it these become
 // sloppy prefixes too.
 const PUBLIC_PREFIXES = [
   '/auth/',               // magic-link bridge + OAuth callback
-  '/onboard/',            // wizard sub-pages: connect, connected, gym-scan…
+  '/onboard/',            // reserved for wizard sub-pages (none live today)
   '/api/onboard/',        // wizard APIs — invite-token gated
   '/api/admin/',          // admin portal APIs — own auth, incl. login
 ];
