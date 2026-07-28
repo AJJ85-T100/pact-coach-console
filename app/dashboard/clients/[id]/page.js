@@ -5,6 +5,12 @@ import PactsPanel from '@/components/PactsPanel';
 import DangerZone from '@/components/DangerZone';
 import NudgeTool from '@/components/NudgeTool';
 import AthleteQuickActions from '@/components/AthleteQuickActions';
+import JourneyChart from '@/components/athlete/JourneyChart';
+import TodayMeters from '@/components/athlete/TodayMeters';
+import ConsistencyHeatmap from '@/components/athlete/ConsistencyHeatmap';
+import TrendRows from '@/components/athlete/TrendRows';
+import StrengthSmalls from '@/components/athlete/StrengthSmalls';
+import { deriveJourney, dayKey, addDays } from '@/lib/athlete/metrics';
 
 // ============================================================
 // Helpers
@@ -30,17 +36,6 @@ function dateLabel(d) {
 function initials(name) {
   if (!name) return '??';
   return name.split(' ').filter(Boolean).map(w => w[0]).join('').slice(0, 2).toUpperCase();
-}
-
-function avg(arr) {
-  if (!arr || !arr.length) return null;
-  const sum = arr.reduce((s, v) => s + (v ?? 0), 0);
-  return sum / arr.length;
-}
-
-function fmt(n, digits = 0) {
-  if (n == null || isNaN(n)) return '—';
-  return Number(n).toFixed(digits);
 }
 
 // ============================================================
@@ -73,11 +68,13 @@ export default async function ClientDetailPage({ params }) {
   const fourteenAgo  = new Date(today);     fourteenAgo.setDate(today.getDate() - 14);
   const twentyEightAgo = new Date(today);   twentyEightAgo.setDate(today.getDate() - 28);
   const eightWeeksAgo  = new Date(today);   eightWeeksAgo.setDate(today.getDate() - 56);
+  // The visual card needs deeper windows than the old text card did:
+  // 90 days feeds the 28-day sparklines and the 8-week consistency grid.
+  const ninetyAgo      = new Date(today);   ninetyAgo.setDate(today.getDate() - 90);
 
-  const sevenAgoStr = sevenAgo.toLocaleDateString('en-CA');
   const fourteenAgoStr = fourteenAgo.toLocaleDateString('en-CA');
-  const twentyEightAgoStr = twentyEightAgo.toLocaleDateString('en-CA');
   const eightWeeksAgoStr  = eightWeeksAgo.toLocaleDateString('en-CA');
+  const ninetyAgoStr      = ninetyAgo.toLocaleDateString('en-CA');
 
   // Start of this week (Monday) for weekly/weekend pact lookup
   const monday = new Date(today);
@@ -91,7 +88,7 @@ export default async function ClientDetailPage({ params }) {
     msgsR, slipsR, pactsR, healthR, weighR, liftsR,
     customPactsR, weeklyPactR, weekendPactR,
     stakesR, cosignersR, winStackR, moodR,
-    progsR, terraR,
+    progsR, terraR, workoutsR,
   ] = await Promise.all([
     // Conversation history (last 30)
     service.from('conversations')
@@ -107,27 +104,30 @@ export default async function ClientDetailPage({ params }) {
       .gte('detected_at', fourteenAgo.toISOString())
       .order('detected_at', { ascending: false }),
 
-    // Daily pacts last 14 days
+    // Daily pacts last 56 days (8-week consistency grid)
     service.from('daily_pacts')
       .select('date, status, wins_completed, total_wins')
       .eq('client_id', client.id)
-      .gte('date', fourteenAgoStr)
+      .gte('date', eightWeeksAgoStr)
       .order('date', { ascending: false }),
 
-    // Health data last 28 days (used for today + averages)
+    // Health data last 90 days (today + sparklines + consistency + averages)
     service.from('health_data')
       .select('steps, calories, protein, carbs, fat, raw, created_at')
       .eq('client_id', client.id)
-      .gte('created_at', twentyEightAgo.toISOString())
+      .gte('created_at', ninetyAgo.toISOString())
       .order('created_at', { ascending: false }),
 
-    // Latest weigh-in
+    // FULL weigh-in history, ASCENDING — the journey chart needs the series,
+    // and the plausibility guard needs each reading's predecessor to judge it.
+    // (Previously .limit(1) desc, which is how a single bad row became
+    // "Current 15kg · Lost 91.3kg · Past target by 70kg".)
     service.from('weigh_ins')
       .select('weight, date, created_at')
       .eq('client_id', client.id)
       .not('weight', 'is', null)
-      .order('created_at', { ascending: false })
-      .limit(1),
+      .order('date', { ascending: true })
+      .limit(1000),
 
     // Lift history — last 8 weeks for trend calc
     service.from('lift_history')
@@ -176,12 +176,12 @@ export default async function ClientDetailPage({ params }) {
       .gte('date', fourteenAgoStr)
       .order('date', { ascending: false }),
 
-    // Mood — latest
+    // Mood — 90 days, so it can carry a sparkline instead of a lone number
     service.from('mood_ratings')
       .select('rating, date, created_at')
       .eq('client_id', client.id)
-      .order('created_at', { ascending: false })
-      .limit(1),
+      .gte('date', ninetyAgoStr)
+      .order('created_at', { ascending: false }),
 
     // Training programmes — non-archived, newest first
     service.from('programs')
@@ -195,6 +195,15 @@ export default async function ClientDetailPage({ params }) {
       .select('provider, status, connected_at, last_event_at, last_event_type, revoked_at')
       .eq('client_id', client.id)
       .order('connected_at', { ascending: true }),
+
+    // Completed workouts, 90 days — the Training row of the consistency grid
+    // and the Session tile. Nothing on the old card showed whether the athlete
+    // actually trained.
+    service.from('workout_logs')
+      .select('id, date, session_name')
+      .eq('client_id', client.id)
+      .gte('date', ninetyAgoStr)
+      .order('date', { ascending: false }),
   ]);
 
   // ============================================================
@@ -204,7 +213,8 @@ export default async function ClientDetailPage({ params }) {
   const slips      = slipsR.data   || [];
   const pacts      = pactsR.data   || [];
   const healthAll  = healthR.data  || [];
-  const lastWeigh  = weighR.data?.[0] || null;
+  const weighAll   = weighR.data   || [];   // ascending
+  const workouts   = workoutsR.data || [];
   const lifts      = liftsR.data   || [];
   const customPacts = customPactsR.data || [];
   const weeklyPact  = weeklyPactR.data  || null;
@@ -212,58 +222,133 @@ export default async function ClientDetailPage({ params }) {
   const stakes      = stakesR.data  || [];
   const cosigners   = cosignersR.data || [];
   const wins        = winStackR.data || [];
-  const mood        = moodR.data?.[0] || null;
+  const moods       = moodR.data || [];
   const programmes  = progsR.data || [];
   const devices     = terraR.data || [];   // gracefully [] until the migration runs
 
-  // Current weight: prefer latest weigh_in over (possibly stale) clients.current_weight
-  const currentWeight = lastWeigh?.weight ?? client.current_weight;
-  const lost = (client.start_weight != null && currentWeight != null)
-    ? +(client.start_weight - currentWeight).toFixed(1) : null;
-  const toGo = (currentWeight != null && client.target_weight != null)
-    ? +(currentWeight - client.target_weight).toFixed(1) : null;
+  // ------------------------------------------------------------
+  // Journey — current weight is the END OF THE 7-DAY TREND over readings
+  // that pass a plausibility guard, never the latest raw row. See
+  // lib/athlete/metrics.js and claude/PACT_Athlete_Card_Visual_Spec.md §4.
+  // ------------------------------------------------------------
+  const journeyData = deriveJourney(weighAll, client);
+  const currentWeight = journeyData.current;
+  const { lost, toGo } = journeyData;
 
-  // Today's health = today's row in healthAll, or the most recent if today isn't logged
-  const todayStr = today.toLocaleDateString('en-CA');
-  const todayHealth = healthAll.find(h => h.created_at?.split('T')[0] === todayStr) || healthAll[0] || null;
-  const sleep = todayHealth?.raw?.sleep ?? null;
-
-  // 7d and 28d averages
-  const sevenAgoIso = sevenAgo.toISOString();
-  const last7 = healthAll.filter(h => h.created_at >= sevenAgoIso);
-  const avg7  = {
-    steps:   avg(last7.map(h => h.steps).filter(Boolean)),
-    protein: avg(last7.map(h => h.protein).filter(Boolean)),
-    carbs:   avg(last7.map(h => h.carbs).filter(Boolean)),
-    fat:     avg(last7.map(h => h.fat).filter(Boolean)),
-    calories: avg(last7.map(h => h.calories).filter(Boolean)),
-    sleep:   avg(last7.map(h => h.raw?.sleep).filter(Boolean)),
-  };
-  const avg28 = {
-    steps:   avg(healthAll.map(h => h.steps).filter(Boolean)),
-    protein: avg(healthAll.map(h => h.protein).filter(Boolean)),
-    carbs:   avg(healthAll.map(h => h.carbs).filter(Boolean)),
-    fat:     avg(healthAll.map(h => h.fat).filter(Boolean)),
-    calories: avg(healthAll.map(h => h.calories).filter(Boolean)),
-    sleep:   avg(healthAll.map(h => h.raw?.sleep).filter(Boolean)),
+  const journey = {
+    points:  journeyData.trend.map(t => ({ t: t.when.getTime(), v: t.v, key: t.key })),
+    raw:     journeyData.all.map(w => ({ t: w.when.getTime(), w: w.weight, key: w.key, suspect: w.suspect })),
+    flagged: journeyData.flagged.map(w => ({ t: w.when.getTime(), w: w.weight })),
+    start: journeyData.start,
+    target: journeyData.target,
+    current: currentWeight,
+    lost, toGo,
+    pace: journeyData.paceKgPerWeek,
+    etaWeeks: journeyData.etaWeeks,
+    cleanCount: journeyData.clean.length,
+    lastCleanLabel: journeyData.lastCleanAt
+      ? journeyData.lastCleanAt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+      : null,
   };
 
-  // Lift trend: latest vs ~4 weeks ago. If <2 entries we can't trend.
-  const latestLift = lifts[0] || null;
-  const olderLift  = lifts.find(l => {
-    const ld = new Date(l.recorded_date);
-    return (today - ld) > 21 * 24 * 60 * 60 * 1000; // older than 3 weeks
-  }) || lifts[lifts.length - 1] || null;
+  // ------------------------------------------------------------
+  // One dense day-by-day series (oldest → newest) behind Today,
+  // Consistency and Trends, so no two sections can disagree.
+  // ------------------------------------------------------------
+  const healthByDay  = {};
+  healthAll.forEach(h => { const k = h.created_at?.split('T')[0]; if (k && !healthByDay[k]) healthByDay[k] = h; });
+  const moodByDay    = {};
+  moods.forEach(m => { const k = m.date || m.created_at?.split('T')[0]; if (k && !moodByDay[k]) moodByDay[k] = m; });
+  const pactByDay    = {};
+  pacts.forEach(p => { if (p.date && !pactByDay[p.date]) pactByDay[p.date] = p; });
+  const workoutByDay = {};
+  workouts.forEach(w => { if (w.date && !workoutByDay[w.date]) workoutByDay[w.date] = w; });
 
-  const liftTrend = (key) => {
-    if (!latestLift || !olderLift || latestLift === olderLift) return 'flat';
-    const cur = latestLift[key];
-    const old = olderLift[key];
-    if (cur == null || old == null) return 'flat';
-    if (cur > old + 1) return 'up';
-    if (cur < old - 1) return 'down';
-    return 'flat';
+  const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  // Programmed days: the athlete's stated training days. (The active programme's
+  // workout_days is the better source once it's exposed on this query — same shape.)
+  const trainingDays = Array.isArray(client.training_days) ? client.training_days : [];
+
+  const series = [];
+  for (let i = 89; i >= 0; i--) {
+    const d = addDays(today, -i);
+    const k = dayKey(d);
+    const h = healthByDay[k] || null;
+    const p = pactByDay[k] || null;
+    const w = workoutByDay[k] || null;
+    series.push({
+      date: k,
+      dow: d.getDay(),
+      trainDay: trainingDays.length ? trainingDays.includes(DOW[d.getDay()]) : false,
+      trained: !!w,
+      sessionName: w?.session_name || null,
+      steps:    h?.steps ?? null,
+      calories: h?.calories ?? null,
+      protein:  h?.protein ?? null,
+      carbs:    h?.carbs ?? null,
+      fat:      h?.fat ?? null,
+      sleep:    h?.raw?.sleep ?? null,
+      mood:     moodByDay[k]?.rating ?? null,
+      pact:     p ? (p.status === 'kept' || p.status === 'complete' || p.wins_completed >= (p.total_wins ?? 1)) : null,
+      pactWins: p?.wins_completed ?? null,
+      pactTotal: p?.total_wins ?? null,
+    });
+  }
+
+  const targets = {
+    steps:    client.step_target    ?? null,
+    calories: client.calorie_target ?? null,
+    protein:  client.protein_target ?? null,
+    carbs:    client.carb_target    ?? null,
+    fat:      client.fat_target     ?? null,
+    sleep:    7.5,   // no per-client column yet; the one honest global default
   };
+
+  const todayRow = series[series.length - 1];
+  const last28   = series.slice(-28);
+  const plannedIn28 = last28.filter(d => d.trainDay).length;
+  const doneIn28    = last28.filter(d => d.trainDay && d.trained).length;
+  const nextTrainDow = trainingDays.length
+    ? (DOW.slice(todayRow.dow + 1).concat(DOW.slice(0, todayRow.dow + 1)).find(x => trainingDays.includes(x)) || null)
+    : null;
+  const sessionState = !todayRow.trainDay ? 'rest' : (todayRow.trained ? 'good' : 'crit');
+  const session = {
+    state: sessionState,
+    next: todayRow.trainDay && !todayRow.trained ? 'today' : nextTrainDow,
+    done: doneIn28,
+    planned: plannedIn28,
+  };
+
+  // Why a metric is thin, when we can say — the card explains the hole
+  // rather than drawing a fall that didn't happen.
+  const staleDevice = (devicesList) => devicesList.find(d => d.status === 'error' || d.status === 'revoked');
+  const sourceNotes = {};
+  {
+    const bad = staleDevice(terraR.data || []);
+    if (bad) {
+      const nm = bad.provider ? bad.provider.charAt(0) + bad.provider.slice(1).toLowerCase() : 'a device';
+      sourceNotes.sleep = `${nm} ${bad.status === 'revoked' ? 'disconnected' : 'needs reconnecting'}`;
+      sourceNotes.steps = sourceNotes.sleep;
+    }
+  }
+
+  // Strength — one small multiple per lift, oldest → newest.
+  // Source today is lift_history; Backlog 4.4 swaps it for set_logs + Epley
+  // e1RM without changing this shape.
+  const liftsAsc = [...lifts].reverse();
+  const LIFT_DEFS = [
+    { key: 'squat',       label: 'Squat' },
+    { key: 'bench_press', label: 'Bench' },
+    { key: 'deadlift',    label: 'Deadlift' },
+    { key: 'ohp',         label: 'OHP' },
+  ];
+  const liftSeries = LIFT_DEFS.map(L => ({
+    key: L.key,
+    label: L.label,
+    points: liftsAsc
+      .filter(r => r[L.key] != null)
+      .map(r => ({ t: new Date(r.recorded_date).getTime(), v: Number(r[L.key]) })),
+  }));
 
   const firstName = client.name?.split(' ')[0] || client.name;
 
@@ -340,6 +425,61 @@ export default async function ClientDetailPage({ params }) {
             steps:    client.step_target,
           }}
         />
+      </div>
+
+      {/* ============================================================
+          Journey — full width, above the grid. The one chart that answers
+          "is what I'm prescribing working?", which no figure on the old
+          text card could.
+          ============================================================ */}
+      <div className="mb-5">
+        <div className="bg-white rounded-lg shadow-card border border-border">
+          <div className="px-5 py-4 border-b border-border flex items-center gap-3 flex-wrap">
+            <h3 className="font-display font-bold text-blue text-[11px] uppercase tracking-[0.15em]">Journey</h3>
+            <span className="text-[11.5px] text-muted">
+              {journey.cleanCount > 0
+                ? `${journey.cleanCount} weigh-in${journey.cleanCount === 1 ? '' : 's'}${
+                    journey.lastCleanLabel ? ` · last ${journey.lastCleanLabel}` : ''}`
+                : 'no weigh-ins yet'}
+            </span>
+          </div>
+          <div className="p-5">
+            <JourneyChart journey={journey} />
+          </div>
+        </div>
+      </div>
+
+      {/* Consistency — full width. Four behaviours over eight weeks; the
+          picture that starts "you've missed Friday five weeks running". */}
+      <div className="mb-5">
+        <div className="bg-white rounded-lg shadow-card border border-border">
+          <div className="px-5 py-4 border-b border-border flex items-center gap-3 flex-wrap">
+            <h3 className="font-display font-bold text-blue text-[11px] uppercase tracking-[0.15em]">Consistency</h3>
+            <span className="text-[11.5px] text-muted">Last 8 weeks — one cell per day, grouped by week</span>
+          </div>
+          <div className="p-5">
+            <ConsistencyHeatmap series={series} targets={targets} />
+          </div>
+        </div>
+      </div>
+
+      {/* Today — full width meter row, replacing the seven-tile em-dash grid */}
+      <div className="mb-5">
+        <div className="bg-white rounded-lg shadow-card border border-border overflow-hidden">
+          <div className="px-5 py-4 border-b border-border flex items-center gap-3 flex-wrap">
+            <h3 className="font-display font-bold text-blue text-[11px] uppercase tracking-[0.15em]">Today</h3>
+            <span className="text-[11.5px] text-muted">
+              {(() => {
+                const missing = ['steps','calories','protein','carbs','fat','sleep','mood']
+                  .filter(k => todayRow[k] == null).length;
+                return missing
+                  ? `${dateLabel(todayRow.date)} · ${missing} of 7 metrics not logged yet`
+                  : `${dateLabel(todayRow.date)} · fully logged`;
+              })()}
+            </span>
+          </div>
+          <TodayMeters series={series} targets={targets} session={session} />
+        </div>
       </div>
 
       {/* Main grid: data on left, conversation on right */}
@@ -477,118 +617,63 @@ export default async function ClientDetailPage({ params }) {
             })()}
           </Card>
 
-          <Card title="Journey">
-            <div className="grid grid-cols-3 gap-4 mb-4">
-              <Stat label="Start"   value={client.start_weight ? `${client.start_weight}kg` : '—'} />
-              <Stat label="Current" value={currentWeight        ? `${currentWeight}kg`        : '—'} />
-              <Stat label="Target"  value={client.target_weight ? `${client.target_weight}kg` : '—'} />
-            </div>
-            <div className="pt-3 border-t border-border grid grid-cols-2 gap-4">
-              {lost !== null && lost >= 0 && (
-                <Stat label="Lost"   value={`${lost}kg`} valueClass="text-red" />
-              )}
-              {lost !== null && lost < 0 && (
-                <Stat label="Gained" value={`${Math.abs(lost)}kg`} valueClass="text-blue" />
-              )}
-              {toGo !== null && toGo > 0 && (
-                <Stat label="To go" value={`${toGo}kg`} valueClass="text-blue" />
-              )}
-              {toGo !== null && toGo <= 0 && (
-                <Stat label="Past target by" value={`${Math.abs(toGo)}kg`} valueClass="text-emerald-700" />
-              )}
-            </div>
-            {lastWeigh && (
-              <p className="text-[10px] text-muted mt-3 tracking-wide">
-                Last weigh-in: {timeAgo(lastWeigh.created_at)}
-              </p>
-            )}
+          <Card title="Trends">
+            <p className="text-[11.5px] text-muted -mt-1 mb-3">
+              7-day average vs the 28-day baseline — biggest movement first.
+            </p>
+            <TrendRows series={series} targets={targets} sourceNotes={sourceNotes} />
+            <p className="text-[11.5px] text-muted mt-3">
+              Green means moving toward {firstName}&apos;s goal, not simply &ldquo;up&rdquo;.
+            </p>
           </Card>
 
-          <Card title="Today's snapshot">
-            {todayHealth ? (
-              <div className="grid grid-cols-3 gap-4">
-                <Stat label="Steps"    value={(todayHealth.steps || 0).toLocaleString()} />
-                <Stat label="Calories" value={todayHealth.calories ? Math.round(todayHealth.calories) : '—'} />
-                <Stat label="Protein"  value={todayHealth.protein  ? `${Math.round(todayHealth.protein)}g`  : '—'} />
-                <Stat label="Carbs"    value={todayHealth.carbs    ? `${Math.round(todayHealth.carbs)}g`    : '—'} />
-                <Stat label="Fat"      value={todayHealth.fat      ? `${Math.round(todayHealth.fat)}g`      : '—'} />
-                <Stat label="Sleep"    value={sleep ? `${sleep.toFixed(1)}h` : '—'} />
-                <Stat label="Mood"     value={mood?.rating ? `${mood.rating.toFixed(1)}/5` : '—'} />
-              </div>
-            ) : (
-              <p className="text-muted text-xs">No health data yet today.</p>
-            )}
-          </Card>
+          <div className="bg-white rounded-lg shadow-card border border-border overflow-hidden">
+            <div className="px-5 py-4 border-b border-border flex items-center gap-3 flex-wrap">
+              <h3 className="font-display font-bold text-blue text-[11px] uppercase tracking-[0.15em]">Strength</h3>
+              <span className="text-[11.5px] text-muted">Estimated 1RM over time</span>
+            </div>
+            <StrengthSmalls lifts={liftSeries} />
+          </div>
 
-          <Card title="Connected devices">
+          {/* Data sources — plumbing status earns a chip strip, not a full card.
+              It earns a sentence when it explains a hole in the data. */}
+          <Card title="Data sources">
             {devices.length === 0 ? (
               <p className="text-muted text-xs">
                 No wearable connected yet — {firstName} can connect Garmin, Oura, Whoop &amp; more
                 from the app&apos;s Settings, and activity will land here automatically.
               </p>
             ) : (
-              <ul className="divide-y divide-border">
-                {devices.map((d, i) => {
-                  const label = d.provider
-                    ? d.provider.charAt(0) + d.provider.slice(1).toLowerCase()
-                    : 'Device';
-                  const chip =
-                    d.status === 'revoked' ? ['Disconnected', 'bg-bg text-muted'] :
-                    d.status === 'error'   ? ['Attention',    'bg-red/10 text-red'] :
-                                             ['Connected',    'bg-emerald-50 text-emerald-700'];
-                  const landed = d.last_event_at
-                    ? `data landed ${timeAgo(d.last_event_at)}${d.last_event_type ? ` (${d.last_event_type})` : ''}`
-                    : d.status === 'revoked'
-                      ? `disconnected ${d.revoked_at ? timeAgo(d.revoked_at) : ''}`.trim()
-                      : 'no data landed yet';
-                  return (
-                    <li key={i} className="flex items-center justify-between gap-3 py-2.5 first:pt-0 last:pb-0">
-                      <div className="min-w-0">
-                        <div className="text-sm font-bold text-blue">{label}</div>
-                        <div className="text-[11px] text-muted">{landed}</div>
-                      </div>
-                      <span className={`text-[10px] font-bold tracking-[0.12em] uppercase px-2 py-1 rounded ${chip[1]}`}>
-                        {chip[0]}
-                      </span>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </Card>
-
-          <Card title="Rolling averages">
-            <div className="grid grid-cols-3 gap-x-4 gap-y-2 text-xs">
-              <div></div>
-              <div className="text-[10px] font-bold text-muted tracking-[0.15em] uppercase">7-day</div>
-              <div className="text-[10px] font-bold text-muted tracking-[0.15em] uppercase">28-day</div>
-
-              <AvgRow label="Steps"    val7={fmt(avg7.steps)}     val28={fmt(avg28.steps)} />
-              <AvgRow label="Calories" val7={fmt(avg7.calories)}  val28={fmt(avg28.calories)} />
-              <AvgRow label="Protein"  val7={fmt(avg7.protein) + 'g'} val28={fmt(avg28.protein) + 'g'} />
-              <AvgRow label="Carbs"    val7={fmt(avg7.carbs)   + 'g'} val28={fmt(avg28.carbs)   + 'g'} />
-              <AvgRow label="Fat"      val7={fmt(avg7.fat)     + 'g'} val28={fmt(avg28.fat)     + 'g'} />
-              <AvgRow label="Sleep"    val7={fmt(avg7.sleep, 1) + 'h'} val28={fmt(avg28.sleep, 1) + 'h'} />
-            </div>
-          </Card>
-
-          <Card title="Compound lifts">
-            {!latestLift ? (
-              <p className="text-muted text-xs">No lifts recorded yet.</p>
-            ) : (
               <>
-                <div className="grid grid-cols-2 gap-3 mb-3">
-                  <LiftStat label="Squat"    value={latestLift.squat}        trend={liftTrend('squat')} />
-                  <LiftStat label="Bench"    value={latestLift.bench_press}  trend={liftTrend('bench_press')} />
-                  <LiftStat label="Deadlift" value={latestLift.deadlift}     trend={liftTrend('deadlift')} />
-                  <LiftStat label="OHP"      value={latestLift.ohp}          trend={liftTrend('ohp')} />
+                <div className="flex gap-2 flex-wrap">
+                  {devices.map((d, i) => {
+                    const label = d.provider
+                      ? d.provider.charAt(0) + d.provider.slice(1).toLowerCase()
+                      : 'Device';
+                    const lamp =
+                      d.status === 'revoked' ? 'bg-muted' :
+                      d.status === 'error'   ? 'bg-warn'  : 'bg-emerald-600';
+                    const landed = d.last_event_at
+                      ? `${timeAgo(d.last_event_at)}${d.last_event_type ? ` · ${d.last_event_type}` : ''}`
+                      : d.status === 'revoked'
+                        ? `disconnected ${d.revoked_at ? timeAgo(d.revoked_at) : ''}`.trim()
+                        : d.status === 'error' ? 'needs reconnecting' : 'no data yet';
+                    return (
+                      <span key={i}
+                        className="inline-flex items-center gap-2 border border-border rounded px-2.5 py-1.5 bg-bg text-[12px]">
+                        <i className={`w-[7px] h-[7px] rounded-full ${lamp}`} />
+                        <b className="text-blue font-semibold">{label}</b>
+                        <span className="text-muted text-[11px]">{landed}</span>
+                      </span>
+                    );
+                  })}
                 </div>
-                <p className="text-[10px] text-muted tracking-wide">
-                  Last recorded: {dateLabel(latestLift.recorded_date)}
-                  {olderLift && olderLift !== latestLift && (
-                    <> · trend vs {dateLabel(olderLift.recorded_date)}</>
-                  )}
-                </p>
+                {Object.keys(sourceNotes).length > 0 && (
+                  <p className="text-[11.5px] text-muted mt-3 leading-snug">
+                    Some trends above are greyed rather than falling — {sourceNotes.sleep}, so those
+                    days have no readings rather than bad ones.
+                  </p>
+                )}
               </>
             )}
           </Card>
@@ -832,34 +917,6 @@ function MetaDate({ label, date, sublabel }) {
       {sublabel && (
         <div className="text-[10px] text-white/60 mt-0.5 truncate max-w-[140px]">{sublabel}</div>
       )}
-    </div>
-  );
-}
-
-function AvgRow({ label, val7, val28 }) {
-  return (
-    <>
-      <div className="text-muted">{label}</div>
-      <div className="font-display font-bold text-blue tabular-nums">{val7}</div>
-      <div className="font-display text-muted tabular-nums">{val28}</div>
-    </>
-  );
-}
-
-function LiftStat({ label, value, trend }) {
-  const trendIcon = trend === 'up' ? '↑' : trend === 'down' ? '↓' : '→';
-  const trendColor = trend === 'up' ? 'text-emerald-600' : trend === 'down' ? 'text-red' : 'text-muted';
-
-  return (
-    <div className="bg-bg rounded p-3 flex items-center justify-between">
-      <div>
-        <div className="text-[10px] font-bold tracking-[0.15em] uppercase text-muted mb-1">{label}</div>
-        <div className="font-display font-bold text-blue text-lg tabular-nums leading-none">
-          {value != null ? `${value}` : '—'}
-          {value != null && <span className="text-xs text-muted font-medium ml-1">kg</span>}
-        </div>
-      </div>
-      <div className={`text-2xl font-bold ${trendColor}`}>{trendIcon}</div>
     </div>
   );
 }
