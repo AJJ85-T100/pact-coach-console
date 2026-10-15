@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { createClient, createServiceClient } from '@/lib/supabase/server';
 import VoiceCalibration from '@/components/VoiceCalibration';
 import CalendarConnect from '@/components/CalendarConnect';
+import CoachRules from '@/components/CoachRules';
 
 /**
  * /dashboard/settings — coach settings, leading with voice calibration.
@@ -30,6 +31,14 @@ export default async function SettingsPage() {
         </p>
       </div>
       <VoiceCalibration initial={pt.voice_calibration} />
+
+      <div className="mt-10 mb-4">
+        <h2 className="font-display font-extrabold text-blue text-xl uppercase tracking-tight">Your rules</h2>
+        <p className="text-muted text-sm mt-1.5 leading-relaxed max-w-xl">
+          The boundaries PAX works inside: when it messages, how often, what it never raises, and whether you approve first.
+        </p>
+      </div>
+      <CoachRules />
 
       <div className="mt-10 mb-4">
         <h2 className="font-display font-extrabold text-blue text-xl uppercase tracking-tight">Your calendar</h2>
