@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import NeedsYouToday from '@/components/NeedsYouToday';
 import { createClient, createServiceClient } from '@/lib/supabase/server';
 
 // ============================================================
@@ -340,6 +341,9 @@ export default async function MyDayPage() {
 
         {/* MAIN COLUMN (2/3) */}
         <div className="lg:col-span-2 space-y-6">
+
+          {/* V2: escalations and PAX drafts that need the coach, first */}
+          <NeedsYouToday />
 
           {/* Status tiles — now clickable jump-offs */}
           <section className="grid grid-cols-2 lg:grid-cols-4 gap-3">
