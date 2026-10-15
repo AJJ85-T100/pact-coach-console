@@ -3,6 +3,7 @@ import { createClient, createServiceClient } from '@/lib/supabase/server';
 import VoiceCalibration from '@/components/VoiceCalibration';
 import CalendarConnect from '@/components/CalendarConnect';
 import CoachRules from '@/components/CoachRules';
+import V2Roster from '@/components/V2Roster';
 
 /**
  * /dashboard/settings — coach settings, leading with voice calibration.
@@ -39,6 +40,15 @@ export default async function SettingsPage() {
         </p>
       </div>
       <CoachRules />
+
+      <div className="mt-10 mb-4">
+        <h2 className="font-display font-extrabold text-blue text-xl uppercase tracking-tight">PACT V2 athletes</h2>
+        <p className="text-muted text-sm mt-1.5 leading-relaxed max-w-xl">
+          Switch an athlete on and PACT V2 writes their daily messages from their wearables and plan, and answers their replies. Off, and the classic bot carries on as before.
+          Athletes need to have consented first; send them the link from Needs you today.
+        </p>
+      </div>
+      <V2Roster />
 
       <div className="mt-10 mb-4">
         <h2 className="font-display font-extrabold text-blue text-xl uppercase tracking-tight">Your calendar</h2>
