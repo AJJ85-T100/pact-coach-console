@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import NeedsYouToday from '@/components/NeedsYouToday';
+import OutcomesPanel from '@/components/OutcomesPanel';
 import { createClient, createServiceClient } from '@/lib/supabase/server';
 
 // ============================================================
@@ -392,6 +393,9 @@ export default async function MyDayPage() {
             />
             <ThisWeekWins wins={wins} clientById={clientById} />
           </div>
+
+          {/* V2: what happened after each kind of PAX message */}
+          <OutcomesPanel />
 
           {/* Today's queue */}
           <TodaysQueue
