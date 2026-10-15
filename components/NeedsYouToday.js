@@ -85,7 +85,9 @@ export default function NeedsYouToday() {
 
   const escalations = data?.escalations ?? [];
   const drafts = data?.drafts ?? [];
-  const empty = !escalations.length && !drafts.length;
+  const atRisk = data?.atRisk ?? [];
+  const count = escalations.length + drafts.length + atRisk.length;
+  const empty = count === 0;
 
   return (
     <section className="bg-white rounded-lg shadow-card border border-border overflow-hidden">
@@ -93,7 +95,7 @@ export default function NeedsYouToday() {
         <div>
           <p className="text-[10px] font-semibold tracking-[0.2em] uppercase text-red">Needs you today</p>
           <h2 className="font-display font-extrabold text-blue text-lg leading-tight mt-1">
-            {empty ? 'Nothing waiting on you.' : `${escalations.length + drafts.length} thing${escalations.length + drafts.length === 1 ? '' : 's'} waiting on you`}
+            {empty ? 'Nothing waiting on you.' : `${count} thing${count === 1 ? '' : 's'} waiting on you`}
           </h2>
         </div>
         {error && <span className="text-xs text-red">{error}</span>}
@@ -171,6 +173,19 @@ export default function NeedsYouToday() {
           </div>
         );
       })}
+          {atRisk.map((a) => (
+        <div key={a.clientId} className="relative px-5 py-4 border-b border-border last:border-b-0 flex items-start justify-between gap-4">
+          <span className="absolute left-0 top-0 bottom-0 w-1 bg-warn" aria-hidden="true" />
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded bg-warn-light text-warn-dark">drifting</span>
+              <Link href={`/dashboard/clients/${a.clientId}`} className="font-semibold text-blue hover:underline">{a.athlete}</Link>
+            </div>
+            <p className="text-sm text-body mt-1.5">{a.reasons.join(' · ')}</p>
+          </div>
+          <Link href={`/dashboard/clients/${a.clientId}`} className="shrink-0 text-xs font-semibold text-center px-3 py-2 rounded border border-border text-blue hover:border-blue">Open athlete</Link>
+        </div>
+      ))}
     </section>
   );
 }
