@@ -45,6 +45,21 @@ export default function NeedsYouToday() {
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState({});
   const [editing, setEditing] = useState({});
+  const [linkResult, setLinkResult] = useState({});
+
+  async function sendConsent(clientId) {
+    setBusy((b) => ({ ...b, [clientId]: true }));
+    try {
+      const res = await fetch(`/api/needs-you/${clientId}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ kind: 'consent' }) });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.error || `Failed (${res.status})`);
+      setLinkResult((r) => ({ ...r, [clientId]: j }));
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy((b) => ({ ...b, [clientId]: false }));
+    }
+  }
 
   const load = useCallback(async () => {
     try {
@@ -86,7 +101,8 @@ export default function NeedsYouToday() {
   const escalations = data?.escalations ?? [];
   const drafts = data?.drafts ?? [];
   const atRisk = data?.atRisk ?? [];
-  const count = escalations.length + drafts.length + atRisk.length;
+  const needConsent = data?.needConsent ?? [];
+  const count = escalations.length + drafts.length + atRisk.length + needConsent.length;
   const empty = count === 0;
 
   return (
@@ -173,7 +189,32 @@ export default function NeedsYouToday() {
           </div>
         );
       })}
-          {atRisk.map((a) => (
+          {needConsent.map((a) => {
+        const r = linkResult[a.clientId];
+        return (
+          <div key={`c-${a.clientId}`} className="relative px-5 py-4 border-b border-border last:border-b-0 flex items-start justify-between gap-4">
+            <span className="absolute left-0 top-0 bottom-0 w-1 bg-blue" aria-hidden="true" />
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded bg-bg-alt text-blue">consent needed</span>
+                <Link href={`/dashboard/clients/${a.clientId}`} className="font-semibold text-blue hover:underline">{a.athlete}</Link>
+              </div>
+              <p className="text-sm text-body mt-1.5">PAX can’t message or coach them until they agree to how their data is used.</p>
+              {r && (
+                <p className="text-xs mt-1.5 text-muted break-all">
+                  {r.sent ? 'Link sent on WhatsApp. ' : 'Couldn’t send it automatically. Share this link with them: '}
+                  {!r.sent && <span className="text-blue">{r.url}</span>}
+                </p>
+              )}
+            </div>
+            <button disabled={busy[a.clientId] || r?.sent} onClick={() => sendConsent(a.clientId)} className="shrink-0 text-xs font-semibold px-3 py-2 rounded bg-blue text-white hover:bg-blue-light disabled:opacity-50">
+              {busy[a.clientId] ? 'Sending…' : r?.sent ? 'Sent' : a.canMessage ? 'Send consent link' : 'Get consent link'}
+            </button>
+          </div>
+        );
+      })}
+
+      {atRisk.map((a) => (
         <div key={a.clientId} className="relative px-5 py-4 border-b border-border last:border-b-0 flex items-start justify-between gap-4">
           <span className="absolute left-0 top-0 bottom-0 w-1 bg-warn" aria-hidden="true" />
           <div className="min-w-0">
