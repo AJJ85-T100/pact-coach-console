@@ -1,0 +1,255 @@
+/* Athlete page — Overview tab.
+   Lifted from the V2 athlete mockup (Main.dc.html). CSS Modules scope every
+   class and keyframe name, so nothing here leaks into the rest of the console. */
+
+.card {
+  background: #fff;
+  border: 1px solid #DCE2EA;
+  padding: 20px 22px;
+  border-radius: 0;
+}
+.cardAlert {
+  border: 2px solid #D92D20;
+}
+
+.lbl {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: #5B6B7F;
+  margin: 0;
+}
+
+.h {
+  font-family: Montserrat, system-ui, sans-serif;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: -.01em;
+  color: #0A2540;
+  margin: 0;
+}
+
+.link {
+  font-size: 13px;
+  font-weight: 600;
+  color: #0A2540;
+}
+.link:hover { color: #D92D20; }
+
+.btn {
+  font-family: Inter, system-ui, sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 12px 16px;
+  min-height: 44px;
+  border: 1px solid #0A2540;
+  background: #fff;
+  color: #0A2540;
+  cursor: pointer;
+  border-radius: 0;
+}
+.btn:disabled { opacity: .5; cursor: default; }
+.btn:focus-visible { outline: 2px solid #0A2540; outline-offset: 2px; }
+.btnRed { background: #D92D20; border-color: #D92D20; color: #fff; }
+.btnRed:hover:not(:disabled) { background: #B0241A; border-color: #B0241A; }
+.btnBlue { background: #0A2540; color: #fff; }
+.btnBlue:hover:not(:disabled) { background: #0F3155; }
+.btnGhost { border-color: #DCE2EA; color: #5B6B7F; }
+.btnGhost:hover:not(:disabled) { border-color: #0A2540; color: #0A2540; }
+
+.tag {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  padding: 3px 6px;
+  border: 1px solid currentColor;
+  line-height: 1.3;
+}
+
+.quote {
+  margin: 0;
+  padding: 14px 16px;
+  background: #F4F6F9;
+  border: 1px solid #DCE2EA;
+  font-size: 15px;
+  line-height: 1.55;
+  color: #0A2540;
+  white-space: pre-line;
+}
+.textarea {
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid #0A2540;
+  font-size: 15px;
+  line-height: 1.55;
+  color: #0A2540;
+  border-radius: 0;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+/* Tabs */
+.tabs {
+  display: flex;
+  border-bottom: 2px solid #DCE2EA;
+  overflow-x: auto;
+  max-width: 100%;
+}
+.tab {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 12px 16px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  color: #5B6B7F;
+  text-decoration: none;
+  border-bottom: 3px solid transparent;
+  margin-bottom: -2px;
+}
+.tab:hover { color: #0A2540; }
+.tabActive { color: #0A2540; border-bottom-color: #D92D20; }
+
+/* Timeline */
+.tl {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  gap: 12px;
+  padding: 14px 0;
+  border-top: 1px solid #EEF1F5;
+}
+
+/* ---------------------------------------------------------- target bars */
+.bar { height: 8px; background: #E8EDF3; position: relative; overflow: hidden; }
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 8px;
+  margin: 0 -8px;
+  cursor: default;
+  outline: none;
+  transition: background .2s;
+}
+.row:hover, .row:focus-visible { background: #F7F9FB; }
+.row:focus-visible { box-shadow: inset 0 0 0 2px #0A2540; }
+
+.fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  transform-origin: left center;
+  animation: growX 1.1s cubic-bezier(.2,.8,.2,1) .2s both;
+}
+.row:hover .fill, .row:focus-visible .fill {
+  animation-name: growX2;
+  animation-duration: .9s;
+  animation-delay: 0s;
+}
+
+.days {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+  height: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition: height .35s ease, opacity .25s ease;
+}
+.row:hover .days, .row:focus-visible .days { height: 92px; opacity: 1; }
+
+.col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  height: 92px;
+  min-width: 0;
+}
+.cb {
+  width: 100%;
+  max-width: 26px;
+  height: 52px;
+  background: #EEF1F5;
+  display: flex;
+  align-items: flex-end;
+}
+.cf { width: 100%; }
+.row:hover .cf, .row:focus-visible .cf { animation: growY .6s cubic-bezier(.2,.8,.2,1) both; }
+
+.cv {
+  font-size: 10px;
+  font-weight: 700;
+  color: #0A2540;
+  opacity: 0;
+  transition: opacity .15s;
+  white-space: nowrap;
+}
+.col:hover .cv, .row:focus-visible .cv { opacity: 1; }
+
+.cd {
+  font-size: 10px;
+  font-weight: 600;
+  color: #5B6B7F;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.note {
+  font-size: 12px;
+  color: #5B6B7F;
+  margin: 0;
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition: max-height .3s, opacity .3s;
+}
+.row:hover .note, .row:focus-visible .note { max-height: 40px; opacity: 1; }
+
+/* ---------------------------------------------------------- trend chart */
+.tchart {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 6px;
+  align-items: end;
+  height: 110px;
+  padding-top: 18px;
+}
+.tc {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  height: 100%;
+  justify-content: flex-end;
+  position: relative;
+  min-width: 0;
+}
+.tf {
+  width: 100%;
+  max-width: 28px;
+  animation: growY 1s cubic-bezier(.2,.8,.2,1) both;
+}
+.tchart:hover .tf { animation-name: growY2; animation-duration: .7s; }
+.tc .cv { position: absolute; top: -16px; }
+.tc:hover .cv { opacity: 1; }
+.tc:hover .tf { filter: brightness(1.25); }
+
+.num { animation: pop .6s ease-out both; }
+
+@keyframes growX  { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes growX2 { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes growY  { from { transform: scaleY(0); transform-origin: bottom; } to { transform: scaleY(1); transform-origin: bottom; } }
+@keyframes growY2 { from { transform: scaleY(0); transform-origin: bottom; } to { transform: scaleY(1); transform-origin: bottom; } }
+@keyframes pop    { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .fill, .cf, .tf, .num, .row, .days, .cv, .note {
+    animation: none !important;
+    transition: none !important;
+  }
+}

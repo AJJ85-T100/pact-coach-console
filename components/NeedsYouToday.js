@@ -14,7 +14,7 @@
  * what good coaching looks like to this coach.
  */
 import Link from 'next/link';
-import { useCallback, useEffect, useState } from 'react';
+import { useNeedsYou, ago, humanAngle, SLOT } from '@/components/needs-you/useNeedsYou';
 
 const TONE = {
   crisis: { bar: 'bg-red', chip: 'bg-red text-white' },
@@ -25,74 +25,8 @@ const TONE = {
   quit: { bar: 'bg-blue', chip: 'bg-bg-alt text-blue' },
 };
 
-const SLOT = { morning: 'Morning', midday: 'Midday', evening: 'Evening' };
-
-function ago(iso) {
-  const min = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
-  if (min < 1) return 'just now';
-  if (min < 60) return `${min}m ago`;
-  const h = Math.floor(min / 60);
-  if (h < 24) return `${h}h ago`;
-  return `${Math.floor(h / 24)}d ago`;
-}
-
-function humanAngle(a) {
-  return a.replace(/_/g, ' ');
-}
-
 export default function NeedsYouToday() {
-  const [data, setData] = useState(null);
-  const [error, setError] = useState(null);
-  const [busy, setBusy] = useState({});
-  const [editing, setEditing] = useState({});
-  const [linkResult, setLinkResult] = useState({});
-
-  async function sendConsent(clientId) {
-    setBusy((b) => ({ ...b, [clientId]: true }));
-    try {
-      const res = await fetch(`/api/needs-you/${clientId}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ kind: 'consent' }) });
-      const j = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(j.error || `Failed (${res.status})`);
-      setLinkResult((r) => ({ ...r, [clientId]: j }));
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setBusy((b) => ({ ...b, [clientId]: false }));
-    }
-  }
-
-  const load = useCallback(async () => {
-    try {
-      const res = await fetch('/api/needs-you', { cache: 'no-store' });
-      const j = await res.json();
-      if (!res.ok) throw new Error(j.error || `Request failed (${res.status})`);
-      setData(j);
-      setError(null);
-    } catch (e) {
-      setError(e.message || 'Could not load.');
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-    const t = setInterval(load, 60000);
-    return () => clearInterval(t);
-  }, [load]);
-
-  async function act(id, body) {
-    setBusy((b) => ({ ...b, [id]: true }));
-    try {
-      const res = await fetch(`/api/needs-you/${id}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-      const j = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(j.error || `Failed (${res.status})`);
-      setEditing((e) => ({ ...e, [id]: undefined }));
-      await load();
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setBusy((b) => ({ ...b, [id]: false }));
-    }
-  }
+  const { data, error, busy, editing, setEditing, linkResult, act, sendConsent } = useNeedsYou();
 
   if (!data && !error) {
     return <section className="bg-white rounded-lg shadow-card border border-border p-5 text-sm text-muted">Checking what needs you…</section>;

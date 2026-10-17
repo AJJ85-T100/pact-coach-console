@@ -10,7 +10,25 @@ import TodayMeters from '@/components/athlete/TodayMeters';
 import ConsistencyHeatmap from '@/components/athlete/ConsistencyHeatmap';
 import TrendRows from '@/components/athlete/TrendRows';
 import StrengthSmalls from '@/components/athlete/StrengthSmalls';
+import DoThisNext from '@/components/athlete/DoThisNext';
+import TargetBars from '@/components/athlete/TargetBars';
+import TrendCard from '@/components/athlete/TrendCard';
+import ov from '@/components/athlete/overview.module.css';
 import { deriveJourney, dayKey, addDays } from '@/lib/athlete/metrics';
+import {
+  programmeWeek, slipTag, consentTag, channelTag, weekTargets, paxTimeline,
+  weeklyAdherence, trendStats, APPROVAL_COPY,
+} from '@/lib/athlete/overview';
+import { engineFetch } from '@/lib/engine';
+
+export const dynamic = 'force-dynamic';
+
+const TABS = [
+  { id: 'overview',     label: 'Overview' },
+  { id: 'progress',     label: 'Progress' },
+  { id: 'conversation', label: 'Conversation' },
+  { id: 'settings',     label: 'Settings' },
+];
 
 // ============================================================
 // Helpers
@@ -33,23 +51,20 @@ function dateLabel(d) {
   return new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-function initials(name) {
-  if (!name) return '??';
-  return name.split(' ').filter(Boolean).map(w => w[0]).join('').slice(0, 2).toUpperCase();
-}
-
 // ============================================================
 // Page
 // ============================================================
-export default async function ClientDetailPage({ params }) {
+export default async function ClientDetailPage({ params, searchParams }) {
+  const tab = TABS.some(t => t.id === searchParams?.tab) ? searchParams.tab : 'overview';
   const supabase = createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const { data: { user } = {} } = await supabase.auth.getUser();
+  if (!user) notFound();
   const service = createServiceClient();
 
   // PT scope check
   const { data: pt } = await service
     .from('personal_trainers')
-    .select('id')
+    .select('id, name')
     .eq('auth_user_id', user.id)
     .maybeSingle();
 
@@ -89,10 +104,11 @@ export default async function ClientDetailPage({ params }) {
     customPactsR, weeklyPactR, weekendPactR,
     stakesR, cosignersR, winStackR, moodR,
     progsR, terraR, workoutsR,
+    planR, stateR, consentsR, ivR, recentUserR, rulesR, rosterR,
   ] = await Promise.all([
     // Conversation history (last 30)
     service.from('conversations')
-      .select('role, content, created_at')
+      .select('role, sender, content, created_at')
       .eq('client_id', client.id)
       .order('created_at', { ascending: false })
       .limit(30),
@@ -204,6 +220,48 @@ export default async function ClientDetailPage({ params }) {
       .eq('client_id', client.id)
       .gte('date', ninetyAgoStr)
       .order('date', { ascending: false }),
+
+    // The plan (programme rows), 8 weeks back to the end of this week —
+    // sessions this week and weekly adherence on the Overview.
+    service.from('programme')
+      .select('date, is_rest, completed, session_name')
+      .eq('client_id', client.id)
+      .gte('date', eightWeeksAgoStr)
+      .lte('date', addDays(monday, 6).toLocaleDateString('en-CA'))
+      .order('date', { ascending: true }),
+
+    // ---- V2 data: read through the coach's own session so RLS scopes it
+    // (state_coach_read, consents_coach_read, interventions_coach_read).
+    supabase.from('athlete_state_daily')
+      .select('date, adherence_7d, adherence_28d, logging_streak, days_silent, slip_risk, readiness')
+      .eq('client_id', client.id)
+      .gte('date', eightWeeksAgoStr)
+      .order('date', { ascending: false }),
+
+    supabase.from('consents')
+      .select('purpose, withdrawn_at, granted_at')
+      .eq('client_id', client.id),
+
+    supabase.from('interventions')
+      .select('id, occurred_at, type, initiated_by, delivery_status, message_ref, channel')
+      .eq('client_id', client.id)
+      .gte('occurred_at', sevenAgo.toISOString())
+      .order('occurred_at', { ascending: false })
+      .limit(60),
+
+    // The athlete's own messages, 7 days — reply lines on the timeline
+    service.from('conversations')
+      .select('content, created_at')
+      .eq('client_id', client.id)
+      .eq('role', 'user')
+      .gte('created_at', sevenAgo.toISOString())
+      .order('created_at', { ascending: true })
+      .limit(200),
+
+    // Coach rules and roster status come from the engine, as the coach —
+    // the same source as Settings → CoachRules and V2Roster.
+    engineFetch('/v1/coach/rules'),
+    engineFetch('/v1/coach/roster'),
   ]);
 
   // ============================================================
@@ -353,51 +411,220 @@ export default async function ClientDetailPage({ params }) {
   const firstName = client.name?.split(' ')[0] || client.name;
 
   // ============================================================
+  // Overview — V2 data. Everything optional: a missing table, an engine
+  // that's down or an athlete not yet on V2 just leaves a card quieter.
+  // ============================================================
+  const planRows    = planR.data || [];
+  const stateRows   = stateR.data || [];
+  const latestState = stateRows[0] || null;
+  const consents    = consentsR.error ? null : (consentsR.data || []);
+  const ivs         = ivR.data || [];
+  const rules       = rulesR.status === 200 && rulesR.json && !rulesR.json.error ? rulesR.json : null;
+  const rosterRow   = rosterR.status === 200
+    ? (rosterR.json?.athletes || []).find(a => a.clientId === client.id) || null
+    : null;
+
+  // Outcomes, coach labels and the message text behind each intervention.
+  const ivIds  = ivs.map(r => r.id);
+  const msgRefs = ivs.map(r => r.message_ref).filter(Boolean);
+  const [outR, labR, ivMsgR] = ivIds.length
+    ? await Promise.all([
+        supabase.from('intervention_outcomes')
+          .select('intervention_id, horizon, status, replied, reply_latency_s, trained, logged_session')
+          .in('intervention_id', ivIds),
+        supabase.from('coach_labels')
+          .select('intervention_id, label, created_at')
+          .in('intervention_id', ivIds)
+          .order('created_at', { ascending: false }),
+        msgRefs.length
+          ? service.from('conversations').select('id, content').eq('client_id', client.id).in('id', msgRefs)
+          : Promise.resolve({ data: [] }),
+      ])
+    : [{ data: [] }, { data: [] }, { data: [] }];
+  const convById = Object.fromEntries((ivMsgR.data || []).map(m => [m.id, m]));
+
+  const ovTargets = {
+    protein: client.protein_target ?? null,
+    steps:   client.step_target    ?? null,
+    sleep:   client.sleep_target   ?? targets.sleep,
+  };
+  const week = weekTargets({ series, planRows, client, targets: ovTargets, today });
+  const sources = [
+    week.rows.some(r => r.key === 'sessions') ? 'Sessions from the plan and logged workouts' : null,
+    week.rows.some(r => r.key === 'protein' || r.key === 'steps' || r.key === 'sleep') ? 'food, steps and sleep from what the app and wearables synced' : null,
+  ].filter(Boolean).join('; ');
+  const targetsFootnote = week.rows.length
+    ? `${week.soFar}. Hover or tab to a target for the day-by-day.${sources ? ` ${sources}.` : ''}`
+    : null;
+
+  const timeline = paxTimeline({
+    interventions: ivs,
+    outcomes: outR.data || [],
+    labels: labR.data || [],
+    convById,
+    userMsgs: recentUserR.data || [],
+    fallbackMsgs: messages.filter(m => m.role === 'assistant' && new Date(m.created_at) >= sevenAgo),
+    coachFirstName: pt?.name?.split(' ')[0] || null,
+    now: today,
+  });
+
+  const weeks = weeklyAdherence({ planRows, workoutDays: workouts.map(w => w.date), stateRows, today });
+  const trend = trendStats(stateRows);
+
+  const progWeek = programmeWeek(programmes, today);
+  const coachLine = [
+    pt?.name ? `Coach: ${pt.name.split(' ')[0]}` : null,
+    progWeek?.label || null,
+    client.goal ? client.goal.replace(/_/g, ' ') : null,
+  ].filter(Boolean).join(' · ');
+  const statusTags = [
+    slipTag(latestState),
+    consentTag(consents),
+    channelTag(client, !!rosterRow?.app),
+  ].filter(Boolean);
+
+  const tabHref = (id) => id === 'overview'
+    ? `/dashboard/clients/${client.id}`
+    : `/dashboard/clients/${client.id}?tab=${id}`;
+
+  // ============================================================
   // Render
   // ============================================================
   return (
-    <div className="px-8 lg:px-10 py-8">
+    <div className="px-4 sm:px-8 lg:px-10 py-8 max-w-[1200px]">
 
       {/* Back link */}
       <Link
         href="/dashboard/athletes"
-        className="text-xs font-semibold tracking-wider uppercase text-muted hover:text-red transition-colors inline-block mb-6"
+        className="text-[13px] font-semibold text-muted hover:text-red transition-colors inline-block mb-5"
       >
-        ‹ Back to athletes
+        ← Athletes
       </Link>
 
-      {/* Athlete header band — dark navy */}
-      <header className="bg-blue text-white rounded-lg px-7 py-6 mb-6">
-        <div className="flex items-start justify-between gap-6 flex-wrap">
-          <div className="flex items-center gap-4 min-w-0">
-            <div className="w-14 h-14 bg-red text-white grid place-items-center font-display font-black text-xl rounded flex-shrink-0">
-              {initials(client.name)}
+      {/* Header — name, coach line, status tags, then the tabs */}
+      <header className="flex flex-wrap gap-4 items-end justify-between mb-5">
+        <div className="flex flex-col gap-2 min-w-0">
+          {coachLine && <p className={ov.lbl}>{coachLine}</p>}
+          <h1 className={ov.h} style={{ fontSize: 'clamp(28px, 5vw, 40px)', lineHeight: 1, overflowWrap: 'anywhere' }}>
+            {client.name}
+          </h1>
+          {statusTags.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {statusTags.map(t => (
+                <span key={t.text} className={ov.tag} style={{ color: t.color }}>{t.text}</span>
+              ))}
             </div>
-            <div className="min-w-0">
-              <h1 className="font-display font-extrabold text-3xl lg:text-4xl uppercase tracking-tight leading-none mb-1.5">
-                {client.name}
-              </h1>
-              <div className="text-sm text-white/70 flex items-center gap-3 flex-wrap">
-                <span>{client.goal?.replace(/_/g, ' ') || 'No goal set'}</span>
-                <span className="text-white/30">·</span>
-                <span className="capitalize">{client.status || 'active'}</span>
-                {client.gym && (<>
-                  <span className="text-white/30">·</span>
-                  <span>{client.gym}</span>
-                </>)}
-              </div>
-            </div>
-          </div>
-
-          {/* Top-right meta dates */}
-          <div className="grid grid-cols-3 gap-6 text-right">
-            <MetaDate label="Member since" date={client.created_at} />
-            <MetaDate label="Target date"  date={client.target_date} />
-            <MetaDate label="Event"        date={client.event_date} sublabel={client.event_name} />
-          </div>
+          )}
         </div>
+        <nav aria-label="Athlete views" className={ov.tabs}>
+          {TABS.map(t => (
+            <Link
+              key={t.id}
+              href={tabHref(t.id)}
+              scroll={false}
+              aria-current={tab === t.id ? 'page' : undefined}
+              className={`${ov.tab} ${tab === t.id ? ov.tabActive : ''}`}
+            >
+              {t.label}
+            </Link>
+          ))}
+        </nav>
       </header>
 
+      {/* ============================================================
+          OVERVIEW — what the coach needs in ten seconds
+          ============================================================ */}
+      {tab === 'overview' && (
+        <div className="flex flex-col gap-5">
+          <DoThisNext clientId={client.id} firstName={firstName} conversationHref={tabHref('conversation')} />
+
+          <div className="grid gap-5 items-start" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(320px, 100%), 1fr))' }}>
+            <div className="flex flex-col gap-5 min-w-0">
+              <TargetBars rows={week.rows} footnote={targetsFootnote} editHref={tabHref('progress')} />
+
+              {/* What PAX has done — last 7 days */}
+              <section className={ov.card} aria-labelledby="ov-timeline">
+                <div className="flex justify-between items-baseline gap-2 mb-1 flex-wrap">
+                  <h2 id="ov-timeline" className={ov.h} style={{ fontSize: 15 }}>What PAX has done</h2>
+                  <p className={ov.lbl}>
+                    Last 7 days · {timeline.total} message{timeline.total === 1 ? '' : 's'}
+                    {timeline.replies > 0 && ` · ${timeline.replies} chat repl${timeline.replies === 1 ? 'y' : 'ies'}`}
+                  </p>
+                </div>
+                {timeline.rows.length === 0 ? (
+                  <p className="text-[14px] text-[#5B6B7F] mt-3 mb-0">PAX hasn’t messaged {firstName} in the last 7 days.</p>
+                ) : (
+                  timeline.rows.map(r => (
+                    <div key={r.id} className={ov.tl}>
+                      <p className={ov.lbl} style={{ fontSize: 10 }}>{r.when}</p>
+                      <div className="flex flex-col gap-1 text-[14px] text-blue min-w-0">
+                        <div style={{ overflowWrap: 'anywhere' }}>
+                          <span className={ov.tag} style={{ color: r.tag.color }}>{r.tag.text}</span> {r.summary}
+                        </div>
+                        {r.outcome && (
+                          <div className="text-[13px]" style={{ color: r.outcome.good ? '#1B6E3A' : '#5B6B7F', fontWeight: r.outcome.good ? 600 : 400 }}>
+                            {r.outcome.text}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
+                <Link href={tabHref('conversation')} className={ov.link} style={{ display: 'inline-block', marginTop: 8 }}>
+                  Open full conversation →
+                </Link>
+              </section>
+            </div>
+
+            <div className="flex flex-col gap-5 min-w-0">
+              <ProfileCard client={client} firstName={firstName} />
+
+              {/* PAX rules — the coach's rules, as the engine applies them */}
+              <section className={ov.card} aria-labelledby="ov-rules" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div className="flex justify-between items-baseline gap-2">
+                  <h2 id="ov-rules" className={ov.h} style={{ fontSize: 15 }}>PAX rules for {firstName}</h2>
+                  <Link href={tabHref('settings')} className={ov.link}>Change</Link>
+                </div>
+                {rosterRow && !rosterRow.onEngine && (
+                  <p className="m-0 text-[13px] text-[#B54708]">PAX V2 is switched off for {firstName}, so these don’t apply yet.</p>
+                )}
+                {rules ? (
+                  <dl className="m-0 grid gap-x-4 gap-y-2 text-[14px] text-blue" style={{ gridTemplateColumns: 'auto 1fr' }}>
+                    <dt className="text-[#5B6B7F]">Autonomy</dt>
+                    <dd className="m-0">{APPROVAL_COPY[rules.approvalMode] || APPROVAL_COPY.auto}</dd>
+                    <dt className="text-[#5B6B7F]">Quiet hours</dt>
+                    <dd className="m-0 tabular-nums">{rules.quietStart}–{rules.quietEnd}</dd>
+                    <dt className="text-[#5B6B7F]">Max touches</dt>
+                    <dd className="m-0">{rules.maxDailyTouches} a day</dd>
+                    <dt className="text-[#5B6B7F]">Never mention</dt>
+                    <dd className="m-0">{rules.neverTopics?.length ? rules.neverTopics.join(', ') : 'Nothing set'}</dd>
+                  </dl>
+                ) : (
+                  <p className="m-0 text-[14px] text-[#5B6B7F]">Couldn’t load your rules just now. They’re in Settings.</p>
+                )}
+                <p className="m-0 text-[12px] text-[#5B6B7F]">Your rules apply to every athlete on your roster.</p>
+              </section>
+
+              <TrendCard stats={trend} weeks={weeks} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================
+          PROGRESS — every visual card, unchanged
+          ============================================================ */}
+      {tab === 'progress' && (
+        <>
+      <div className="bg-white border border-border shadow-card rounded-lg px-5 py-4 mb-5 grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <MetaDate label="Member since" date={client.created_at} />
+        <MetaDate label="Target date"  date={client.target_date} />
+        <MetaDate label="Event"        date={client.event_date} sublabel={client.event_name} />
+        <div>
+          <div className="text-[9px] font-semibold tracking-[0.18em] uppercase text-muted mb-1">Status</div>
+          <div className="text-sm text-blue capitalize">{client.status || 'active'}{client.gym ? ` · ${client.gym}` : ''}</div>
+        </div>
+      </div>
       {/* Quick actions strip — sits right under the navy band */}
       <div className="flex items-center gap-2 mb-5 flex-wrap">
         <Link
@@ -482,12 +709,8 @@ export default async function ClientDetailPage({ params }) {
         </div>
       </div>
 
-      {/* Main grid: data on left, conversation on right */}
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
-
-        {/* LEFT — data cards (3 of 5 cols) */}
-        <div className="lg:col-span-3 space-y-5">
-
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+        <div className="space-y-5 min-w-0">
           {/* Training programmes — first card, top of column */}
           <Card title="Training programmes">
             {programmes.length === 0 ? (
@@ -549,72 +772,6 @@ export default async function ClientDetailPage({ params }) {
                 </div>
               </>
             )}
-          </Card>
-
-          {/* Athlete profile — the onboarding answers a PT actually coaches from.
-              Injuries first (safety), then the why, then logistics. */}
-          <Card title="Athlete profile">
-            {(() => {
-              const days = Array.isArray(client.training_days) ? client.training_days : [];
-              const hasWhy = client.motivation || client.why_now || client.biggest_blocker || client.tried_before;
-              const hasLogistics = client.experience_level || client.training_style || days.length > 0 ||
-                client.training_time || client.session_length_minutes;
-              if (!client.injuries && !hasWhy && !hasLogistics) {
-                return (
-                  <p className="text-[12px] text-muted">
-                    Nothing captured yet — {firstName}'s onboarding answers will appear here.
-                  </p>
-                );
-              }
-              return (
-                <div className="space-y-4">
-                  {client.injuries && (
-                    <div className="bg-warn-light border border-warn rounded px-3.5 py-2.5">
-                      <div className="text-[9px] font-bold tracking-[0.15em] uppercase text-warn-dark mb-1">
-                        ⚠ Injuries & limitations
-                      </div>
-                      <p className="text-[13px] text-blue leading-snug">{client.injuries}</p>
-                    </div>
-                  )}
-                  {hasWhy && (
-                    <div className="space-y-2">
-                      {client.motivation && (
-                        <ProfileLine label="Their why" text={client.motivation} />
-                      )}
-                      {client.why_now && (
-                        <ProfileLine label="Why now" text={client.why_now} />
-                      )}
-                      {client.biggest_blocker && (
-                        <ProfileLine label="Biggest blocker" text={client.biggest_blocker} />
-                      )}
-                      {client.tried_before && (
-                        <ProfileLine label="Tried before" text={client.tried_before} />
-                      )}
-                    </div>
-                  )}
-                  {hasLogistics && (
-                    <div className="pt-3 border-t border-border grid grid-cols-2 gap-x-4 gap-y-3">
-                      {client.experience_level && <Stat label="Experience" value={client.experience_level} />}
-                      {client.training_style && <Stat label="Style" value={client.training_style} />}
-                      {client.training_time && <Stat label="Prefers" value={client.training_time} />}
-                      {client.session_length_minutes && <Stat label="Session length" value={`${client.session_length_minutes} min`} />}
-                      {days.length > 0 && (
-                        <div className="col-span-2">
-                          <div className="text-[9px] font-bold tracking-[0.15em] uppercase text-muted mb-1.5">Training days</div>
-                          <div className="flex gap-1.5 flex-wrap">
-                            {['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(d => (
-                              <span key={d} className={`text-[10px] font-bold px-2 py-1 rounded ${
-                                days.includes(d) ? 'bg-blue text-white' : 'bg-bg text-muted'
-                              }`}>{d}</span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
           </Card>
 
           <Card title="Trends">
@@ -681,9 +838,8 @@ export default async function ClientDetailPage({ params }) {
           {/* Coach-authored pacts — live panel: add, pause, watch status */}
           <PactsPanel clientId={client.id} />
 
-          {/* Manual nudge — coach brief in, PAX message out, in your voice */}
-          <NudgeTool clientId={client.id} clientFirstName={(client.name || '').split(' ')[0]} />
-
+        </div>
+        <div className="space-y-5 min-w-0">
           <Card title="Pact context">
             <div className="space-y-4">
 
@@ -819,10 +975,15 @@ export default async function ClientDetailPage({ params }) {
             )}
           </Card>
         </div>
+      </div>
+        </>
+      )}
 
-        {/* RIGHT — conversation, sticky (2 of 5 cols) */}
-        <div className="lg:col-span-2">
-          <div className="lg:sticky lg:top-6">
+      {/* ============================================================
+          CONVERSATION
+          ============================================================ */}
+      {tab === 'conversation' && (
+        <div className="max-w-3xl">
             <div className="bg-white rounded-lg shadow-card border border-border flex flex-col" style={{ maxHeight: 'calc(100vh - 3rem)' }}>
               <h3 className="font-display font-bold text-blue text-[11px] uppercase tracking-[0.15em] px-5 py-4 border-b border-border flex-shrink-0">
                 PAX conversation · {messages.length} message{messages.length === 1 ? '' : 's'} <span className="normal-case font-normal text-muted tracking-normal">· newest first</span>
@@ -857,12 +1018,18 @@ export default async function ClientDetailPage({ params }) {
                 </div>
               )}
             </div>
-          </div>
         </div>
+      )}
 
-        <DangerZone clientId={client.id} clientName={client.name || ''} />
-
-      </div>
+      {/* ============================================================
+          SETTINGS — manual nudge and archive / erase
+          ============================================================ */}
+      {tab === 'settings' && (
+        <div className="max-w-3xl space-y-5">
+          <NudgeTool clientId={client.id} clientFirstName={(client.name || '').split(' ')[0]} />
+          <DangerZone clientId={client.id} clientName={client.name || ''} />
+        </div>
+      )}
     </div>
   );
 }
@@ -883,41 +1050,64 @@ function Card({ title, children }) {
   );
 }
 
-function ProfileLine({ label, text }) {
-  return (
-    <div>
-      <div className="text-[9px] font-bold tracking-[0.15em] uppercase text-muted mb-0.5">{label}</div>
-      <p className="text-[13px] text-blue leading-snug">{text}</p>
-    </div>
-  );
-}
-
-function Stat({ label, value, valueClass = 'text-blue' }) {
-  return (
-    <div>
-      <div className={`font-display font-bold text-base leading-none tabular-nums ${valueClass}`}>
-        {value}
-      </div>
-      <div className="text-[9px] font-semibold tracking-[0.15em] uppercase text-muted mt-1.5">
-        {label}
-      </div>
-    </div>
-  );
-}
-
 function MetaDate({ label, date, sublabel }) {
   return (
     <div>
-      <div className="text-[9px] font-semibold tracking-[0.18em] uppercase text-white/40 mb-1">
+      <div className="text-[9px] font-semibold tracking-[0.18em] uppercase text-muted mb-1">
         {label}
       </div>
-      <div className="text-sm text-white tabular-nums">
+      <div className="text-sm text-blue tabular-nums">
         {dateLabel(date)}
       </div>
       {sublabel && (
-        <div className="text-[10px] text-white/60 mt-0.5 truncate max-w-[140px]">{sublabel}</div>
+        <div className="text-[10px] text-muted mt-0.5 truncate max-w-[140px]">{sublabel}</div>
       )}
     </div>
+  );
+}
+
+/** "What {name} told you" — the onboarding answers a coach coaches from.
+ *  Injuries first (safety), then the why, then logistics. */
+function ProfileCard({ client, firstName }) {
+  const days = Array.isArray(client.training_days) ? client.training_days : [];
+  const prefers = [
+    client.training_time,
+    client.session_length_minutes ? `${client.session_length_minutes} min` : null,
+  ].filter(Boolean).join(', ');
+  const why = client.motivation || null;
+  const hasAny = client.injuries || why || client.why_now || client.biggest_blocker || client.tried_before ||
+    client.experience_level || client.training_style || prefers || days.length;
+  const Line = ({ label, children }) => (
+    <div>
+      <p className={ov.lbl}>{label}</p>
+      <p className="mt-1 mb-0 text-[14px] leading-normal text-blue">{children}</p>
+    </div>
+  );
+  return (
+    <section className={ov.card} aria-labelledby="ov-profile" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <h2 id="ov-profile" className={ov.h} style={{ fontSize: 15 }}>What {firstName} told you</h2>
+      {!hasAny && (
+        <p className="m-0 text-[14px] text-[#5B6B7F]">Nothing captured yet. {firstName}’s onboarding answers will appear here.</p>
+      )}
+      {client.injuries && (
+        <div style={{ padding: '12px 14px', border: '1px solid #F3B8B3', background: '#FEF3F2' }}>
+          <p className={ov.lbl} style={{ color: '#B42318' }}>Injuries and limitations</p>
+          <p className="mt-1 mb-0 text-[14px] font-semibold text-blue">{client.injuries}</p>
+        </div>
+      )}
+      {why && <Line label="Their why">{why}</Line>}
+      {client.why_now && <Line label="Why now">{client.why_now}</Line>}
+      {client.biggest_blocker && <Line label="Biggest blocker">{client.biggest_blocker}</Line>}
+      {client.tried_before && <Line label="Tried before">{client.tried_before}</Line>}
+      {(client.experience_level || prefers || client.training_style || days.length > 0) && (
+        <div className="grid grid-cols-2 gap-3">
+          {client.experience_level && <Line label="Experience"><span className="capitalize">{client.experience_level}</span></Line>}
+          {prefers && <Line label="Prefers">{prefers}</Line>}
+          {client.training_style && <Line label="Style"><span className="capitalize">{String(client.training_style).replace(/_/g, ' ')}</span></Line>}
+          {days.length > 0 && <Line label="Training days">{['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].filter(d => days.includes(d)).join(', ')}</Line>}
+        </div>
+      )}
+    </section>
   );
 }
 
