@@ -4,6 +4,8 @@ import VoiceCalibration from '@/components/VoiceCalibration';
 import CalendarConnect from '@/components/CalendarConnect';
 import CoachRules from '@/components/CoachRules';
 import V2Roster from '@/components/V2Roster';
+import EscalationAlerts from '@/components/EscalationAlerts';
+import BusinessSettings from '@/components/BusinessSettings';
 
 /**
  * /dashboard/settings — coach settings, leading with voice calibration.
@@ -40,6 +42,22 @@ export default async function SettingsPage() {
         </p>
       </div>
       <CoachRules />
+
+      <div className="mt-10 mb-4" id="alerts">
+        <h2 className="font-display font-extrabold text-blue text-xl uppercase tracking-tight">Escalation alerts</h2>
+        <p className="text-muted text-sm mt-1.5 leading-relaxed max-w-xl">
+          When an athlete says something PAX mustn’t handle alone, it sends them a holding message and tells you. Get that on your phone, not just on Today.
+        </p>
+      </div>
+      <EscalationAlerts />
+
+      <div className="mt-10 mb-4" id="business">
+        <h2 className="font-display font-extrabold text-blue text-xl uppercase tracking-tight">Business</h2>
+        <p className="text-muted text-sm mt-1.5 leading-relaxed max-w-xl">
+          Your numbers before PACT, so Today can show what it keeps. Only you see these.
+        </p>
+      </div>
+      <BusinessSettings />
 
       <div className="mt-10 mb-4">
         <h2 className="font-display font-extrabold text-blue text-xl uppercase tracking-tight">PACT V2 athletes</h2>

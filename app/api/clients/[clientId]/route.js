@@ -62,8 +62,14 @@ export async function DELETE(req, context) {
   const mode = url.searchParams.get('mode') === 'erase' ? 'erase' : 'archive';
 
   if (mode === 'archive') {
-    const { error } = await supabase.from('clients')
-      .update({ status: 'churned' }).eq('id', clientId);
+    // churned_at feeds "Kept this month" on Today. Fall back to status-only
+    // if the 2026-10-17 migration hasn't added the column yet.
+    let { error } = await supabase.from('clients')
+      .update({ status: 'churned', churned_at: new Date().toISOString() }).eq('id', clientId);
+    if (error && /churned_at/.test(error.message || '')) {
+      ({ error } = await supabase.from('clients')
+        .update({ status: 'churned' }).eq('id', clientId));
+    }
     if (error) {
       console.error('[clients] archive failed', error);
       return NextResponse.json({ error: 'Could not archive the client.' }, { status: 500 });

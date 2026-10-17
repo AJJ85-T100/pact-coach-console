@@ -5,6 +5,7 @@ import PactsPanel from '@/components/PactsPanel';
 import DangerZone from '@/components/DangerZone';
 import NudgeTool from '@/components/NudgeTool';
 import AthleteQuickActions from '@/components/AthleteQuickActions';
+import AthleteBilling from '@/components/AthleteBilling';
 import JourneyChart from '@/components/athlete/JourneyChart';
 import TodayMeters from '@/components/athlete/TodayMeters';
 import ConsistencyHeatmap from '@/components/athlete/ConsistencyHeatmap';
@@ -1027,6 +1028,7 @@ export default async function ClientDetailPage({ params, searchParams }) {
       {tab === 'settings' && (
         <div className="max-w-3xl space-y-5">
           <NudgeTool clientId={client.id} clientFirstName={(client.name || '').split(' ')[0]} />
+          <AthleteBilling clientId={client.id} firstName={firstName} />
           <DangerZone clientId={client.id} clientName={client.name || ''} />
         </div>
       )}

@@ -1,766 +1,186 @@
-import Link from 'next/link';
-import NeedsYouToday from '@/components/NeedsYouToday';
 import OutcomesPanel from '@/components/OutcomesPanel';
+import { TodayProvider } from '@/components/today/TodayContext';
+import {
+  TodayHeader, Escalations, Drafts, Drifting, ConsentNeeded, QueueClear, AutonomyCard, AutoLog,
+} from '@/components/today/TodayQueue';
+import { RevenueStrip, RosterToday, PaxToday, AthletesReplying, OnboardingFunnel } from '@/components/today/TodayCards';
+import s from '@/components/today/today.module.css';
 import { createClient, createServiceClient } from '@/lib/supabase/server';
+import { engineFetch } from '@/lib/engine';
+import {
+  londonKey, addDaysKey, isActive, latestStateByClient, rosterBands, revenue,
+  paxToday, groupAutoLog, replyDays, onboardingFunnel,
+} from '@/lib/today/derive';
+
+export const dynamic = 'force-dynamic';
 
 // ============================================================
-// Helpers
+// Today — the coach's home.
+//
+// Reads: personal_trainers + clients (service role, scoped by pt_id, select
+// '*' so new columns are read defensively), V2 tables through the coach's
+// own session (RLS: athlete_state_daily, interventions, intervention_outcomes,
+// coach_labels, consents), the engine as the coach (roster; and, client-side,
+// needs-you + autonomy). Any query that fails leaves its card quieter.
 // ============================================================
-function greetingForHour(h) {
-  if (h < 5)  return 'Late one';
-  if (h < 12) return 'Good morning';
-  if (h < 17) return 'Good afternoon';
-  if (h < 22) return 'Good evening';
-  return 'Late one';
-}
 
-function initials(name) {
-  if (!name) return '??';
-  return name.split(' ').filter(Boolean).map(w => w[0]).join('').slice(0, 2).toUpperCase();
-}
+const LOG_EVENT_KINDS = ['session_done', 'set_logged', 'food_logged', 'weigh_in', 'mood', 'checkin'];
 
-function dateStrISO(d) {
-  return d.toLocaleDateString('en-CA');
-}
-
-function timeAgo(iso) {
-  if (!iso) return '';
-  const ms = Date.now() - new Date(iso).getTime();
-  const min = Math.floor(ms / 60000);
-  if (min < 1)  return 'just now';
-  if (min < 60) return `${min}m ago`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24)  return `${hr}h ago`;
-  const days = Math.floor(hr / 24);
-  if (days < 7) return `${days}d ago`;
-  return new Date(iso).toLocaleDateString('en-GB');
-}
-
-// Parse a raw bot milestone key (e.g. "steps_5000_2026-06-21",
-// "bad_week_2026-06-21", "squat_pr_2026-06-20") into a human predicate
-// + a type used for the activity icon. The trailing ISO date is stripped
-// because the timestamp already carries it.
-function parseBotEvent(key) {
-  if (!key) return { text: 'reached a milestone', type: 'milestone' };
-  const k = String(key).replace(/[\s_-]?\d{4}-\d{2}-\d{2}\s*$/, '').trim();
-  const low = k.toLowerCase();
-
-  const steps = low.match(/steps?[\s_-]?(\d{3,6})/);
-  if (steps) return { text: `hit ${Number(steps[1]).toLocaleString('en-GB')} steps`, type: 'steps' };
-
-  if (/bad[\s_-]?week/.test(low)) return { text: 'flagged a tough week', type: 'badweek' };
-
-  if (/onboard|signed[\s_-]?up|joined|new[\s_-]?client/.test(low)) {
-    return { text: 'just completed onboarding — review their profile and schedule a call', type: 'onboarded' };
+/** Which of `ids` have at least one row in `table` (bounded, handles heavy loggers). */
+async function idsWithRows(db, table, ids, extra) {
+  const found = new Set();
+  let remaining = [...ids];
+  for (let pass = 0; pass < 6 && remaining.length; pass++) {
+    let q = db.from(table).select('client_id').in('client_id', remaining).limit(1000);
+    if (extra) q = extra(q);
+    const { data, error } = await q;
+    if (error || !data?.length) break;
+    const before = found.size;
+    data.forEach((r) => found.add(r.client_id));
+    remaining = remaining.filter((id) => !found.has(id));
+    if (data.length < 1000 || found.size === before) break;
   }
-
-  if (/anniversary|milestone/.test(low)) {
-    const u = low.match(/(\d+)\s*(year|month|week|day)/);
-    if (u) return { text: `reached their ${u[1]}-${u[2]} milestone`, type: 'anniversary' };
-    return { text: 'reached a milestone', type: 'anniversary' };
-  }
-
-  if (/streak/.test(low)) {
-    const n = (low.match(/(\d+)/) || [])[1];
-    return { text: n ? `reached a ${n}-day streak` : 'extended a streak', type: 'streak' };
-  }
-
-  if (/\bpr\b|_pr|pr_|personal[\s_-]?record/.test(low)) {
-    const lift = k.replace(/[_-]/g, ' ').replace(/\bpr\b/gi, '').replace(/personal record/gi, '').trim();
-    return { text: lift ? `hit a ${lift} PR` : 'hit a new PR', type: 'pr' };
-  }
-
-  // Generic milestone: humanise + split digits from letters ("9months" → "9 months").
-  const human = k.replace(/[_-]/g, ' ')
-    .replace(/(\d)([a-z])/gi, '$1 $2')
-    .replace(/([a-z])(\d)/gi, '$1 $2')
-    .trim()
-    .replace(/\b\w/g, (c) => c.toUpperCase());
-  return { text: human || 'reached a milestone', type: 'milestone' };
+  return found;
 }
 
-function humaniseSlipType(type) {
-  if (!type) return 'a slip';
-  return type.replace(/_/g, ' ');
-}
+const safe = (r) => (r && !r.error ? r.data || [] : []);
 
-// Day bucket label for grouping the activity feed.
-function dayBucketLabel(when) {
-  const d = dateStrISO(new Date(when));
-  const now = new Date();
-  const yest = new Date(now); yest.setDate(now.getDate() - 1);
-  if (d === dateStrISO(now))  return 'Today';
-  if (d === dateStrISO(yest)) return 'Yesterday';
-  return new Date(when).toLocaleDateString('en-GB', { weekday: 'long' });
-}
-
-// ============================================================
-// Page
-// ============================================================
-export default async function MyDayPage() {
+export default async function TodayPage() {
   const supabase = createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const { data: { user } = {} } = await supabase.auth.getUser();
   const service = createServiceClient();
 
-  // PT row
-  const { data: pt } = await service
-    .from('personal_trainers')
-    .select('id, name, business_name')
-    .eq('auth_user_id', user.id)
-    .maybeSingle();
+  const { data: pt } = user
+    ? await service.from('personal_trainers').select('*').eq('auth_user_id', user.id).maybeSingle()
+    : { data: null };
 
-  // Clients — skip the query entirely if no PT row, and always default to []
-  // (Supabase returns data: null on error, which default destructuring doesn't catch).
   let clients = [];
   if (pt?.id) {
-    const { data } = await service
-      .from('clients')
-      .select('id, name, status, current_weight, start_weight, target_weight, goal, gym, last_seen_at')
-      .eq('pt_id', pt.id)
-      .order('name');
+    const { data } = await service.from('clients').select('*').eq('pt_id', pt.id).order('name');
     clients = data || [];
   }
+  const active = clients.filter(isActive);
+  const activeIds = active.map((c) => c.id);
+  const nameBy = Object.fromEntries(clients.map((c) => [c.id, c.name || 'Athlete']));
 
-  const clientIds = clients.map(c => c.id);
-  const clientById = Object.fromEntries(clients.map(c => [c.id, c]));
+  const now = new Date();
+  const todayKey = londonKey(now);
+  const since26h = new Date(now.getTime() - 26 * 3600e3).toISOString();
+  const since8d = new Date(now.getTime() - 8 * 864e5).toISOString();
 
-  // Date windows
-  const today = new Date();
-  const todayStr = dateStrISO(today);
-  const sevenAgo = new Date(today); sevenAgo.setDate(today.getDate() - 7);
-  const monday = new Date(today);
-  monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
-  const mondayStr = dateStrISO(monday);
-
-  // 7-day window of ISO date strings, oldest → newest (for sparklines)
-  const days7 = [...Array(7)].map((_, i) => {
-    const d = new Date(today); d.setDate(today.getDate() - (6 - i));
-    return dateStrISO(d);
-  });
-
-  // ============================================================
-  // Aggregate queries (skipped if no clients to avoid empty IN)
-  // ============================================================
-  let pacts7d = [], todayProgramme = [], wins = [], milestones = [];
-  let slips24h = [], recentMessages = [], weeklyPactsThisWeek = [];
-  let pendingClips = [], upcomingAppts = [];
-
-  if (clientIds.length > 0) {
-    const day24Ago = new Date(today); day24Ago.setDate(today.getDate() - 1);
-
-    const [
-      pactsR, programmeR, winsR, milestonesR,
-      slipsR, msgsR, weeklyR, clipsR, apptsR,
-    ] = await Promise.all([
-      service.from('daily_pacts')
-        .select('client_id, date, status')
-        .in('client_id', clientIds)
-        .gte('date', dateStrISO(sevenAgo)),
-
-      service.from('programme')
-        .select('client_id, date, completed')
-        .in('client_id', clientIds)
-        .eq('date', todayStr),
-
-      service.from('win_stack')
-        .select('client_id, date, pact_type, description, weight, created_at')
-        .in('client_id', clientIds)
-        .gte('date', mondayStr)
-        .order('date', { ascending: false })
-        .limit(20),
-
-      service.from('milestones')
-        .select('client_id, key, created_at')
-        .in('client_id', clientIds)
-        .order('created_at', { ascending: false })
-        .limit(30),
-
-      service.from('slip_events')
-        .select('client_id, event_type, detected_at')
-        .in('client_id', clientIds)
-        .gte('detected_at', day24Ago.toISOString())
-        .order('detected_at', { ascending: false })
-        .limit(20),
-
-      service.from('conversations')
-        .select('client_id, role, content, created_at')
-        .in('client_id', clientIds)
-        .eq('role', 'user')
-        .gte('created_at', day24Ago.toISOString())
-        .order('created_at', { ascending: false })
-        .limit(20),
-
-      service.from('weekly_pacts')
-        .select('client_id, week_start, status, pact_score')
-        .in('client_id', clientIds)
-        .eq('week_start', mondayStr),
-
-      service.from('form_clips')
-        .select('id, client_id')
-        .in('client_id', clientIds)
-        .eq('review_status', 'pending'),
-
-      service.from('appointments')
-        .select('client_id, scheduled_at, note, status')
-        .in('client_id', clientIds)
-        .eq('status', 'scheduled')
-        .gte('scheduled_at', new Date().toISOString())
-        .order('scheduled_at', { ascending: true })
-        .limit(5),
+  let stateRows = [], ivRows = [], labelRows = [], outcomeRows = [], consentRows = [], openInvites = [], roster = null;
+  if (pt?.id) {
+    const [stateR, ivR, labR, outR, consR, invR, rosterR] = await Promise.all([
+      activeIds.length
+        ? supabase.from('athlete_state_daily')
+          .select('client_id, date, slip_risk, adherence_7d, adherence_28d, days_silent')
+          .in('client_id', activeIds)
+          .gte('date', addDaysKey(todayKey, -7))
+          .limit(5000)
+        : Promise.resolve({ data: [] }),
+      supabase.from('interventions')
+        .select('id, client_id, type, initiated_by, delivery_status, occurred_at, decision')
+        .eq('pt_id', pt.id)
+        .gte('occurred_at', since26h)
+        .order('occurred_at', { ascending: true })
+        .limit(3000),
+      supabase.from('coach_labels')
+        .select('intervention_id, label, edit_text, created_at')
+        .eq('pt_id', pt.id)
+        .gte('created_at', since26h)
+        .limit(3000),
+      // 4 h outcome of each message sent in the last week (RLS: outcomes_coach_read)
+      supabase.from('intervention_outcomes')
+        .select('replied, interventions!inner(occurred_at, type, pt_id)')
+        .eq('horizon', '4h')
+        .eq('status', 'resolved')
+        .eq('interventions.pt_id', pt.id)
+        .gte('interventions.occurred_at', since8d)
+        .limit(5000),
+      activeIds.length
+        ? supabase.from('consents').select('client_id, purpose, withdrawn_at').in('client_id', activeIds)
+        : Promise.resolve({ data: [] }),
+      service.from('invite_tokens')
+        .select('id, client_name, expires_at')
+        .eq('pt_id', pt.id)
+        .is('used_at', null)
+        .gte('expires_at', now.toISOString())
+        .limit(200),
+      engineFetch('/v1/coach/roster'),
     ]);
-
-    pacts7d              = pactsR.data    || [];
-    todayProgramme       = programmeR.data || [];
-    wins                 = winsR.data     || [];
-    milestones           = milestonesR.data || [];
-    slips24h             = slipsR.data    || [];
-    recentMessages       = msgsR.data     || [];
-    weeklyPactsThisWeek  = weeklyR.data   || [];
-    pendingClips         = clipsR.data    || [];
-    upcomingAppts        = apptsR.data    || [];
+    stateRows = safe(stateR);
+    ivRows = safe(ivR);
+    labelRows = safe(labR);
+    outcomeRows = safe(outR).map((o) => ({ replied: o.replied, occurred_at: o.interventions?.occurred_at, type: o.interventions?.type })).filter((o) => o.occurred_at);
+    consentRows = safe(consR);
+    openInvites = safe(invR);
+    roster = rosterR.status === 200 && Array.isArray(rosterR.json?.athletes) ? rosterR.json.athletes : null;
   }
 
-  // ============================================================
-  // Derive
-  // ============================================================
-  const total       = clients.length;
-  const atRiskCount = clients.filter(c => c.status === 'at_risk').length;
+  // ---------------- Derive
+  const stateBy = latestStateByClient(stateRows);
+  const bands = rosterBands(active, stateBy);
+  const rev = revenue({ clients, active, drifting: bands.drifting_list, pt, todayKey });
+  const pax = paxToday({ ivs: ivRows, labels: labelRows, todayKey });
+  const autoGroups = groupAutoLog(pax.auto, nameBy);
+  const reply = replyDays(outcomeRows, todayKey);
 
-  // Per-client adherence (for roster pulse %) + 7-day series (for sparkline)
-  const adherenceByClient = {};
-  const seriesByClient = {};
-  for (const id of clientIds) {
-    const cp = pacts7d.filter(p => p.client_id === id);
-    if (cp.length === 0) {
-      adherenceByClient[id] = null;
-    } else {
-      const won = cp.filter(p => p.status === 'won').length;
-      adherenceByClient[id] = Math.round((won / cp.length) * 100);
+  // First log: only worth checking for athletes who've reached that step.
+  let loggedIds = new Set();
+  if (activeIds.length) {
+    const preFunnel = onboardingFunnel({ active, openInvites, roster, consentRows, loggedIds: new Set() });
+    const candidates = new Set(preFunnel.stages[3].stuck.map((p) => p.clientId));
+    let remaining = [...candidates];
+    const checks = [
+      [supabase, 'athlete_events', (q) => q.in('kind', LOG_EVENT_KINDS)],
+      [service, 'workout_logs'],
+      [service, 'weigh_ins'],
+      [service, 'health_data'],
+      [service, 'mood_ratings'],
+    ];
+    for (const [db, table, extra] of checks) {
+      if (!remaining.length) break;
+      const hit = await idsWithRows(db, table, remaining, extra);
+      hit.forEach((id) => loggedIds.add(id));
+      remaining = remaining.filter((id) => !loggedIds.has(id));
     }
-    const byDate = Object.fromEntries(cp.map(p => [p.date, p.status]));
-    seriesByClient[id] = days7.map(ds => {
-      const s = byDate[ds];
-      if (s === undefined) return null;
-      if (s === 'won') return 1;
-      if (s === 'partial') return 0.5;
-      return 0;
-    });
   }
+  const funnel = onboardingFunnel({ active, openInvites, roster, consentRows, loggedIds });
 
-  // Active this week: clients with any pact entry in last 7d
-  const activeThisWeek = new Set(pacts7d.map(p => p.client_id)).size;
-
-  // Sessions today (real from programme)
-  const sessionsToday    = todayProgramme.length;
-  const sessionsComplete = todayProgramme.filter(p => p.completed).length;
-
-  // Reports drafted: weekly_pacts with this week_start
-  const reportsDrafted = weeklyPactsThisWeek.length;
-
-  // Live queue signals
-  const pendingFormReviews = pendingClips.length;
-  const messages24h = recentMessages.length;
-  const nextAppt = upcomingAppts[0] || null;
-
-  // ----- Unified activity feed --------------------------------
-  const milestoneEvents = milestones.map(m => {
-    const p = parseBotEvent(m.key);
-    return { kind: p.type, when: m.created_at, clientId: m.client_id, text: p.text };
-  });
-  const slipEvents = slips24h.map(s => ({
-    kind: 'slip', when: s.detected_at, clientId: s.client_id,
-    text: `flagged ${humaniseSlipType(s.event_type)}`,
-  }));
-  const messageEvents = recentMessages.map(m => {
-    const body = (m.content || '').trim();
-    const snip = body.slice(0, 72) + (body.length > 72 ? '…' : '');
-    return { kind: 'message', when: m.created_at, clientId: m.client_id, text: `messaged: “${snip}”` };
-  });
-
-  // Merge, dedupe identical lines, cap routine step-logs so they don't flood.
-  const merged = [...milestoneEvents, ...slipEvents, ...messageEvents]
-    .filter(e => e.when)
-    .sort((a, b) => new Date(b.when) - new Date(a.when));
-
-  const seen = new Set();
-  let stepCount = 0;
-  const activity = [];
-  for (const e of merged) {
-    const sig = `${e.clientId}|${e.text}`;
-    if (seen.has(sig)) continue;
-    if (e.kind === 'steps') { if (stepCount >= 4) continue; stepCount++; }
-    seen.add(sig);
-    activity.push(e);
-    if (activity.length >= 16) break;
-  }
-
-  // Greeting copy
-  const firstName = pt?.name?.split(' ')[0] || 'Coach';
-  const now       = new Date();
-  const greeting  = greetingForHour(now.getHours());
-  const dateLabel = now.toLocaleDateString('en-GB', {
-    weekday: 'long', day: 'numeric', month: 'long',
-  }).toUpperCase();
-  const timeLabel = now.toLocaleTimeString('en-GB', {
-    hour: '2-digit', minute: '2-digit',
-  });
-
-  // Smart subtitle
-  let heroSubtitle;
-  if (total === 0) {
-    heroSubtitle = 'No athletes yet. Invite your first athlete to get started.';
-  } else if (sessionsToday > 0) {
-    heroSubtitle = `${sessionsToday} session${sessionsToday === 1 ? '' : 's'} scheduled today.${atRiskCount > 0 ? ` ${atRiskCount} athlete${atRiskCount === 1 ? '' : 's'} need${atRiskCount === 1 ? 's' : ''} attention.` : ''}`;
-  } else if (atRiskCount > 0) {
-    const names = clients.filter(c => c.status === 'at_risk').map(c => c.name.split(' ')[0]).join(', ');
-    heroSubtitle = `${total} athletes in your roster. ${atRiskCount} need attention — ${names}.`;
-  } else {
-    heroSubtitle = `${total} athletes in your roster. All on track.`;
-  }
+  const dateLabel = now.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'Europe/London' });
 
   return (
-    <>
-      {/* DARK HERO BAND */}
-      <section className="bg-blue text-white px-8 lg:px-10 py-10 lg:py-12">
-        <p className="text-[11px] font-semibold text-red tracking-[0.25em] uppercase mb-3">
-          {dateLabel} · {timeLabel}
-        </p>
-        <h1 className="font-display font-extrabold text-4xl lg:text-5xl uppercase tracking-tight leading-[0.95] mb-3">
-          {greeting}, {firstName}.
-        </h1>
-        <p className="text-white/70 text-sm lg:text-base max-w-2xl leading-relaxed">
-          {heroSubtitle}
-        </p>
-      </section>
+    <TodayProvider drifting={bands.drifting_list} hasState={bands.hasState}>
+      <div className={s.page}>
+        <TodayHeader dateLabel={dateLabel} sentOwn={pax.sentOwn} />
 
-      {/* QUICK ACTIONS — launch bar (Salesforce/Workday style) */}
-      <div className="px-8 lg:px-10 pt-6">
-        <QuickActions />
-      </div>
+        <RevenueStrip rev={rev} />
 
-      <div className="px-8 lg:px-10 py-8 grid grid-cols-1 lg:grid-cols-3 gap-6">
-
-        {/* MAIN COLUMN (2/3) */}
-        <div className="lg:col-span-2 space-y-6">
-
-          {/* V2: escalations and PAX drafts that need the coach, first */}
-          <NeedsYouToday />
-
-          {/* Status tiles — now clickable jump-offs */}
-          <section className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <StatusTile
-              label="Sessions today"
-              value={sessionsToday}
-              sub={sessionsToday > 0 ? `${sessionsComplete} done` : 'None scheduled'}
-              href="/dashboard/briefs"
-            />
-            <StatusTile
-              label="Form reviews"
-              value={pendingFormReviews}
-              accent={pendingFormReviews > 0}
-              sub={pendingFormReviews > 0 ? 'Waiting for you' : 'Queue clear'}
-              href="/dashboard/form-review"
-            />
-            <StatusTile
-              label="Reports drafted"
-              value={reportsDrafted}
-              sub={reportsDrafted > 0 ? `for week of ${monday.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}` : 'Build the week ahead'}
-              href="/dashboard/reports"
-            />
-            <StatusTile
-              label="At risk"
-              value={atRiskCount}
-              accent={atRiskCount > 0}
-              sub={atRiskCount > 0 ? 'Action required' : 'All clear'}
-              href="/dashboard/at-risk"
-            />
-          </section>
-
-          {/* Next session */}
-          {nextAppt || sessionsToday > 0 ? (
-            <NextSessionCard programme={todayProgramme} clientById={clientById} nextAppt={nextAppt} />
-          ) : (
-            <NoSessionsPlaceholder />
-          )}
-
-          {/* Roster pulse + Wins side by side */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <RosterPulse
-              clients={clients}
-              adherenceByClient={adherenceByClient}
-              seriesByClient={seriesByClient}
-              activeThisWeek={activeThisWeek}
-            />
-            <ThisWeekWins wins={wins} clientById={clientById} />
-          </div>
-
-          {/* V2: what happened after each kind of PAX message */}
-          <OutcomesPanel />
-
-          {/* Today's queue */}
-          <TodaysQueue
-            atRiskCount={atRiskCount}
-            sessionsToday={sessionsToday}
-            pendingFormReviews={pendingFormReviews}
-            messages24h={messages24h}
-          />
-        </div>
-
-        {/* ACTIVITY FEED (1/3) */}
-        <aside className="lg:col-span-1">
-          <div className="lg:sticky lg:top-6">
-            <ActivityFeed events={activity} clientById={clientById} />
-          </div>
-        </aside>
-
-      </div>
-    </>
-  );
-}
-
-// ============================================================
-// Components
-// ============================================================
-function QuickActions() {
-  const actions = [
-    { href: '/dashboard/briefs',   label: "Today's briefs" },
-    { href: '/dashboard/reports',  label: 'PAX reports' },
-    { href: '/dashboard/athletes', label: 'All athletes' },
-    { href: '/dashboard/programs', label: 'Build a programme' },
-    { href: '/dashboard/invite',   label: 'Invite athlete' },
-  ];
-  return (
-    <section className="flex flex-wrap gap-2">
-      {actions.map(a => (
-        <Link
-          key={a.href}
-          href={a.href}
-          className="group inline-flex items-center gap-2.5 bg-white border border-border rounded-lg px-4 py-2.5 shadow-card hover:border-blue transition-colors"
-        >
-          <span className="w-1.5 h-1.5 rounded-full bg-red flex-shrink-0" />
-          <span className="text-[12px] font-semibold uppercase tracking-wider text-blue">{a.label}</span>
-          <span className="text-red text-sm leading-none opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all">→</span>
-        </Link>
-      ))}
-    </section>
-  );
-}
-
-function StatusTile({ label, value, sub, accent, muted, href }) {
-  const inner = (
-    <>
-      <div className="flex items-start justify-between">
-        <div className="text-[10px] font-semibold tracking-[0.2em] uppercase text-muted mb-2">
-          {label}
-        </div>
-        {href && (
-          <span className="text-red text-sm leading-none opacity-0 group-hover:opacity-100 transition-opacity">→</span>
-        )}
-      </div>
-      <div className={`font-display font-extrabold text-3xl leading-none mb-1 ${accent ? 'text-red' : 'text-blue'}`}>
-        {value}
-      </div>
-      {sub && <div className="text-[11px] text-muted">{sub}</div>}
-    </>
-  );
-
-  const base = `bg-white rounded-lg shadow-card p-5 border ${
-    accent ? 'border-red' : muted ? 'border-border opacity-60' : 'border-border'
-  }`;
-
-  if (href && !muted) {
-    return (
-      <Link href={href} className={`group block ${base} hover:border-blue transition-colors`}>
-        {inner}
-      </Link>
-    );
-  }
-  return <div className={base}>{inner}</div>;
-}
-
-function NextSessionCard({ programme, clientById, nextAppt }) {
-  // Prefer a real booked appointment (it has a time); fall back to today's
-  // programmed sessions when nothing is in the diary.
-  const apptClient = nextAppt ? clientById[nextAppt.client_id] : null;
-  const next = programme[0];
-  const client = apptClient || clientById[next?.client_id];
-
-  const apptDate = nextAppt ? new Date(nextAppt.scheduled_at) : null;
-  const isToday = apptDate && apptDate.toLocaleDateString('en-CA') === new Date().toLocaleDateString('en-CA');
-  const whenLabel = apptDate
-    ? (isToday ? 'Today' : apptDate.toLocaleDateString('en-GB', { weekday: 'short' }))
-    : 'Today';
-  const bigValue = apptDate
-    ? apptDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
-    : programme.length;
-  const smallLabel = apptDate ? 'booked' : 'total';
-
-  return (
-    <div className="bg-white rounded-lg shadow-card border border-border p-5">
-      <div className="flex items-start justify-between mb-3">
-        <h3 className="font-display font-bold text-blue text-[11px] uppercase tracking-[0.15em]">
-          Next session
-        </h3>
-        {client && (
-          <Link href={`/dashboard/clients/${client.id}`} className="text-[10px] font-semibold uppercase tracking-wider text-red hover:text-red-deep">
-            Open full brief →
-          </Link>
-        )}
-      </div>
-      <div className="flex items-center gap-4">
-        <div className="bg-blue text-white rounded p-3 text-center min-w-[80px]">
-          <div className="text-[10px] font-bold tracking-wider uppercase opacity-80">{whenLabel}</div>
-          <div className="font-display font-extrabold text-lg leading-none">{bigValue}</div>
-          <div className="text-[10px] tracking-wider uppercase opacity-80 mt-1">{smallLabel}</div>
-        </div>
-        <div className="min-w-0">
-          <div className="font-display font-bold text-blue text-base">
-            {client?.name || 'Athlete'}
-          </div>
-          <div className="text-xs text-muted">
-            {nextAppt?.note || client?.goal?.replace(/_/g, ' ') || 'session'}
-            {!nextAppt && programme.length > 1 && <> · +{programme.length - 1} more today</>}
-            {nextAppt && programme.length > 0 && <> · {programme.length} programmed today</>}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function NoSessionsPlaceholder() {
-  return (
-    <div className="bg-white rounded-lg shadow-card border border-border p-5">
-      <h3 className="font-display font-bold text-blue text-[11px] uppercase tracking-[0.15em] mb-3">
-        Today's calendar
-      </h3>
-      <p className="text-sm text-muted">
-        No sessions scheduled today. PAX is on the line if any of your athletes need a check-in.
-      </p>
-    </div>
-  );
-}
-
-// Compact inline sparkline from a 7-slot series of {0, 0.5, 1, null}.
-function Sparkline({ series, stroke }) {
-  const pts = series
-    .map((v, i) => ({ v, i }))
-    .filter(p => p.v != null);
-  if (pts.length < 2) return null;
-  // No variance (e.g. a flat all-zero pre-pilot week) → nothing worth drawing.
-  if (pts.every(p => p.v === pts[0].v)) return null;
-
-  const W = 52, H = 16, span = (series.length - 1) || 1;
-  const xy = (p) => {
-    const x = (p.i / span) * W;
-    const y = H - 1 - p.v * (H - 2);
-    return { x, y };
-  };
-  const coords = pts.map(p => { const { x, y } = xy(p); return `${x.toFixed(1)},${y.toFixed(1)}`; }).join(' ');
-  const last = xy(pts[pts.length - 1]);
-
-  return (
-    <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} className="mt-1.5 mx-auto block" aria-hidden="true">
-      <polyline points={coords} fill="none" stroke={stroke} strokeWidth="1.4" strokeLinejoin="round" strokeLinecap="round" />
-      <circle cx={last.x} cy={last.y} r="1.7" fill={stroke} />
-    </svg>
-  );
-}
-
-function RosterPulse({ clients, adherenceByClient, seriesByClient, activeThisWeek }) {
-  return (
-    <div className="bg-white rounded-lg shadow-card border border-border p-5">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="font-display font-bold text-blue text-[11px] uppercase tracking-[0.15em]">
-          Roster pulse · {activeThisWeek} active
-        </h3>
-        <Link href="/dashboard/athletes" className="text-[10px] font-semibold uppercase tracking-wider text-red hover:text-red-deep">
-          All athletes →
-        </Link>
-      </div>
-      {clients.length === 0 ? (
-        <p className="text-muted text-xs">No athletes yet.</p>
-      ) : (
-        <div className="grid grid-cols-3 gap-2">
-          {clients.map(c => {
-            const adh = adherenceByClient[c.id];
-            const stroke = adh == null ? '#8A95A3' : adh >= 80 ? '#0F8A5F' : adh >= 50 ? '#D97706' : '#D92D20';
-            const accent = adh == null
-              ? 'border-border bg-bg text-muted'
-              : adh >= 80
-                ? 'border-emerald-300 bg-emerald-50 text-emerald-800'
-                : adh >= 50
-                  ? 'border-warn bg-warn-light text-warn-dark'
-                  : 'border-red/40 bg-red/10 text-red';
-            return (
-              <Link
-                key={c.id}
-                href={`/dashboard/clients/${c.id}`}
-                className={`border rounded p-2 text-center transition-transform hover:scale-105 ${accent}`}
-              >
-                <div className="font-display font-bold text-xs leading-none">{initials(c.name)}</div>
-                <div className="font-display font-extrabold text-sm leading-none mt-1.5 tabular-nums">
-                  {adh != null ? `${adh}%` : '—'}
-                </div>
-                <Sparkline series={seriesByClient[c.id] || []} stroke={stroke} />
-              </Link>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ThisWeekWins({ wins, clientById }) {
-  return (
-    <div className="bg-white rounded-lg shadow-card border border-border p-5">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="font-display font-bold text-blue text-[11px] uppercase tracking-[0.15em]">
-          This week's wins · {wins.length}
-        </h3>
-      </div>
-      {wins.length === 0 ? (
-        <p className="text-muted text-xs">No wins logged this week yet. There's still time.</p>
-      ) : (
-        <ul className="space-y-3">
-          {wins.slice(0, 4).map((w, i) => {
-            const c = clientById[w.client_id];
-            return (
-              <li key={i} className="flex items-start gap-2.5 text-sm">
-                <span className="w-5 h-5 bg-emerald-500 text-white rounded grid place-items-center flex-shrink-0 text-[10px] font-bold">★</span>
-                <div className="min-w-0">
-                  <div className="text-blue leading-snug">
-                    <span className="font-semibold">{c?.name?.split(' ')[0] || 'Athlete'}</span>
-                    {w.description ? ` — ${w.description}` : ` kept their ${w.pact_type || 'pact'}`}
-                  </div>
-                  <div className="text-[10px] text-muted tracking-wide uppercase mt-0.5">
-                    {timeAgo(w.created_at || w.date)}
-                  </div>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-function TodaysQueue({ atRiskCount, sessionsToday, pendingFormReviews, messages24h }) {
-  return (
-    <div className="bg-white rounded-lg shadow-card border border-border p-5">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="font-display font-bold text-blue text-[11px] uppercase tracking-[0.15em]">
-          Today's queue
-        </h3>
-      </div>
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
-        <QueueButton label="Pre-session briefs" count={sessionsToday} href="/dashboard/briefs" />
-        <QueueButton label="Form videos"        count={pendingFormReviews} accent={pendingFormReviews > 0} href="/dashboard/form-review" />
-        <QueueButton label="Messages · 24h"     count={messages24h} href="/dashboard/activity" />
-        <QueueButton label="At-risk follow-up"  count={atRiskCount} accent={atRiskCount > 0} href="/dashboard/at-risk" />
-      </div>
-    </div>
-  );
-}
-
-function QueueButton({ label, count, accent, disabled, href }) {
-  const body = (
-    <>
-      <div className="text-[9px] font-bold tracking-[0.15em] uppercase">{label}</div>
-      <div className="font-display font-extrabold text-xl leading-none mt-2 tabular-nums">{count}</div>
-    </>
-  );
-  const cls = `border rounded px-3 py-3 text-left block ${
-    disabled
-      ? 'bg-bg border-border text-muted'
-      : accent
-        ? 'bg-white border-red text-red'
-        : 'bg-white border-border text-blue hover:border-blue transition-colors'
-  }`;
-  if (href && !disabled) {
-    return <Link href={href} className={cls}>{body}</Link>;
-  }
-  return <div className={cls}>{body}</div>;
-}
-
-function ActivityFeed({ events, clientById }) {
-  // Group consecutive events under day headers (Today / Yesterday / weekday).
-  const groups = [];
-  for (const e of events) {
-    const label = dayBucketLabel(e.when);
-    let g = groups[groups.length - 1];
-    if (!g || g.label !== label) { g = { label, items: [] }; groups.push(g); }
-    g.items.push(e);
-  }
-
-  return (
-    <div className="bg-white rounded-lg shadow-card border border-border" style={{ maxHeight: 'calc(100vh - 3rem)' }}>
-      <div className="px-5 py-4 border-b border-border">
-        <p className="text-[10px] font-bold tracking-[0.2em] uppercase text-red mb-1">
-          Last 24h · refreshes on load
-        </p>
-        <h3 className="font-display font-extrabold text-blue text-lg uppercase tracking-tight">
-          Activity
-        </h3>
-      </div>
-      {events.length === 0 ? (
-        <div className="p-5 text-muted text-xs">
-          Nothing in the last 24 hours. Quiet day.
-        </div>
-      ) : (
-        <div className="overflow-y-auto scroll-thin">
-          {groups.map((g, gi) => (
-            <div key={gi}>
-              <div className="px-5 pt-4 pb-2 text-[10px] font-bold tracking-[0.18em] uppercase text-muted bg-bg/40">
-                {g.label}
-              </div>
-              <ul className="divide-y divide-border">
-                {g.items.map((e, i) => {
-                  const c = clientById[e.clientId];
-                  const celebratory = e.kind === 'pr' || e.kind === 'anniversary' || e.kind === 'milestone' || e.kind === 'streak' || e.kind === 'onboarded';
-                  return (
-                    <li key={i} className={`px-5 py-3 flex items-start gap-3 ${celebratory ? 'bg-emerald-50' : ''}`}>
-                      <ActivityIcon kind={e.kind} />
-                      <div className="min-w-0 flex-1">
-                        <div className="text-sm leading-snug">
-                          <span className="font-semibold text-blue">{c?.name?.split(' ')[0] || 'Athlete'}</span>{' '}
-                          <span className={celebratory ? 'text-blue font-medium' : 'text-body'}>{e.text}</span>
-                        </div>
-                        <div className="text-[10px] text-muted tracking-wide uppercase mt-0.5">
-                          {timeAgo(e.when)}
-                        </div>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
+        <div className={s.grid}>
+          <div className={s.main}>
+            <QueueClear />
+            <Escalations />
+            <Drafts />
+            <div className={s.pair}>
+              <Drifting />
+              <ConsentNeeded />
             </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
+            <AutonomyCard />
+            <OnboardingFunnel funnel={funnel} />
+            <AutoLog groups={autoGroups} total={pax.sentOwn} />
+          </div>
 
-function ActivityIcon({ kind }) {
-  const map = {
-    pr:          { bg: 'bg-emerald-500', char: '★', tx: 'text-white' },
-    anniversary: { bg: 'bg-emerald-500', char: '★', tx: 'text-white' },
-    milestone:   { bg: 'bg-emerald-500', char: '★', tx: 'text-white' },
-    streak:      { bg: 'bg-emerald-500', char: '◆', tx: 'text-white' },
-    onboarded:   { bg: 'bg-blue',        char: '+', tx: 'text-white' },
-    steps:       { bg: 'bg-blue',        char: '↑', tx: 'text-white' },
-    badweek:     { bg: 'bg-warn',        char: '!', tx: 'text-white' },
-    slip:        { bg: 'bg-warn',        char: '!', tx: 'text-white' },
-    message:     { bg: 'bg-blue',        char: '“', tx: 'text-white' },
-    generic:     { bg: 'bg-blue',        char: '•', tx: 'text-white' },
-  };
-  const m = map[kind] || map.generic;
-  return (
-    <span className={`w-7 h-7 rounded grid place-items-center flex-shrink-0 text-xs font-bold ${m.bg} ${m.tx}`}>
-      {m.char}
-    </span>
+          <div className={s.side}>
+            <RosterToday bands={bands} />
+            <PaxToday sentOwn={pax.sentOwn} drafted={pax.drafted} escalated={pax.escalated} />
+            <AthletesReplying reply={reply} />
+          </div>
+        </div>
+
+        <div id="whats-working">
+          <OutcomesPanel />
+        </div>
+      </div>
+    </TodayProvider>
   );
 }
