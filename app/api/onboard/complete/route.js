@@ -9,6 +9,7 @@
  * Body: { token: string, form: {...} }
  */
 
+import { randomBytes } from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/server';
 
@@ -272,6 +273,26 @@ export async function POST(request) {
       }
     }
 
+    // One-tap Telegram connect: a single-use code on their row, opened as
+    // t.me/<bot>?start=<code>. The bot ties that Telegram account to this
+    // athlete and sends the consent link. Non-fatal: without it (bot username
+    // not set, or the telegram_link migration not run) the coach connects them.
+    let telegramUrl = null;
+    try {
+      const bot = (process.env.TELEGRAM_BOT_USERNAME || '').replace(/^@/, '');
+      if (/^\w{5,32}$/.test(bot)) {
+        const code = randomBytes(18).toString('base64url');
+        const { error: tErr } = await service.from('clients').update({
+          telegram_link_code: code,
+          telegram_link_expires_at: new Date(Date.now() + 14 * 864e5).toISOString(),
+        }).eq('id', client.id);
+        if (tErr) console.error('[onboard] telegram link code not saved (non-fatal)', tErr.message);
+        else telegramUrl = `https://t.me/${bot}?start=${code}`;
+      }
+    } catch (e) {
+      console.error('[onboard] telegram link failed (non-fatal)', e);
+    }
+
     // Notify the coach: surfaces in the dashboard activity feed as a prompt to
     // review the new profile and schedule a first call. Non-critical — never
     // block the client's success on it.
@@ -310,7 +331,7 @@ export async function POST(request) {
       console.error('[onboard] coach email failed (non-fatal)', e);
     }
 
-    return NextResponse.json({ ok: true, client_id: client.id, name: client.name });
+    return NextResponse.json({ ok: true, client_id: client.id, name: client.name, telegram_url: telegramUrl });
   } catch (e) {
     console.error('[onboard] exception', e);
     return NextResponse.json({ error: 'Something went wrong. Please try again.' }, { status: 500 });

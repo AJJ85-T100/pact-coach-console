@@ -143,9 +143,22 @@ export default function OnboardWizard({ token, coachName, clientName, clientPhon
           <p className="text-body text-sm leading-relaxed mb-2">
             Nice one{form.name ? `, ${form.name.split(' ')[0]}` : ''}. Your profile's with {coachName} now.
           </p>
-          <p className="text-muted text-sm leading-relaxed">
-            PAX — your accountability companion — will say hello on WhatsApp once {coachName} connects you. Nothing else to do for now.
-          </p>
+          {done.telegram_url ? (
+            <>
+              <p className="text-muted text-sm leading-relaxed mb-5">
+                Last step: connect Telegram so PAX, your accountability companion, can check in between sessions. PAX will then ask your OK on how your data is used.
+              </p>
+              <a href={done.telegram_url}
+                className="inline-block bg-red text-white font-semibold tracking-wider uppercase text-xs px-7 py-3.5 rounded hover:bg-red-deep transition-colors">
+                Connect Telegram
+              </a>
+              <p className="text-muted text-xs leading-relaxed mt-3">Opens Telegram. Tap Start. The link works once and lasts 14 days.</p>
+            </>
+          ) : (
+            <p className="text-muted text-sm leading-relaxed">
+              PAX, your accountability companion, will say hello once {coachName} connects you. Nothing else to do for now.
+            </p>
+          )}
         </div>
       </Shell>
     );
@@ -386,14 +399,14 @@ export default function OnboardWizard({ token, coachName, clientName, clientPhon
       )}
 
       {step === 7 && (
-        <Step title="Stay connected" sub="PAX lives in WhatsApp — no app to download.">
-          <Field label="Your WhatsApp number" hint="Include the country code, e.g. +44 7700 900123.">
+        <Step title="Stay connected" sub="PAX checks in on Telegram. You'll connect it on the next screen.">
+          <Field label="Your mobile number" hint="So your coach can reach you. Include the country code, e.g. +44 7700 900123.">
             <input type="tel" value={form.whatsapp_phone} onChange={(e) => set('whatsapp_phone', e.target.value)} placeholder="+44 7700 900123" maxLength={20}
               className="w-full bg-bg border border-border rounded px-3.5 py-3 text-sm text-blue placeholder:text-muted focus:outline-none focus:border-blue" />
           </Field>
           <div className="bg-bg border-l-[3px] border-blue rounded-r p-4 mt-2">
             <p className="text-body text-xs leading-relaxed">
-              You won't hear from PAX straight away. Once {coachName} connects the WhatsApp line, PAX will introduce itself and start keeping you on track between sessions — no spam, no guilt.
+              Once you've connected Telegram and said OK to how your data is used, PAX will start keeping you on track between sessions. No spam, no guilt.
             </p>
           </div>
           {error && <div className="bg-red/10 border border-red/30 text-red px-4 py-3 rounded text-sm mt-4">{error}</div>}
