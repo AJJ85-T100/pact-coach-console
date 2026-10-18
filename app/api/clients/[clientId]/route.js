@@ -46,7 +46,14 @@ const CHILD_TABLES = [
   // added 2026-07-24
   'activities', 'coach_notes', 'terra_connections', 'appointments',
   'lift_history', 'pact_checkins', 'calendar_days', 'notifications',
+  // V2 engine (2026-10-18). These cascade from clients anyway; listed so the
+  // receipt shows them and the list matches the engine's domain/athleteData.ts.
+  'athlete_events', 'athlete_state_daily', 'consents', 'push_tokens',
+  'brief_claims', 'scheduled_sends',
 ];
+
+// 42P01 = Postgres; PGRST205 = newer PostgREST "could not find the table".
+const isMissing = (e) => e && (e.code === '42P01' || e.code === 'PGRST205');
 
 export async function DELETE(req, context) {
   noStore();
@@ -148,11 +155,28 @@ export async function DELETE(req, context) {
     return { programs: ids.length };
   });
 
+  // Messages PACT sent them, with their outcomes and the coach's labels.
+  await step('interventions+outcomes+labels', async () => {
+    const { data: ivs, error } = await supabase.from('interventions')
+      .select('id').eq('client_id', clientId);
+    if (error) { if (isMissing(error)) return {}; throw new Error(error.message); }
+    const ids = (ivs || []).map((r) => r.id);
+    if (ids.length) {
+      for (const t of ['intervention_outcomes', 'coach_labels']) {
+        const { error: e } = await supabase.from(t).delete().in('intervention_id', ids);
+        if (e && !isMissing(e)) throw new Error(`${t}: ${e.message}`);
+      }
+    }
+    const { error: e } = await supabase.from('interventions').delete().eq('client_id', clientId);
+    if (e) throw new Error(e.message);
+    return { interventions: ids.length };
+  });
+
   for (const table of CHILD_TABLES) {
     await step(table, async () => {
       const { error } = await supabase.from(table).delete().eq('client_id', clientId);
-      // 42P01 = table doesn't exist on this deployment; that's not a failure.
-      if (error && error.code !== '42P01') throw new Error(error.message);
+      // A table that doesn't exist on this deployment is not a failure.
+      if (error && !isMissing(error)) throw new Error(error.message);
       return {};
     });
   }
@@ -161,7 +185,7 @@ export async function DELETE(req, context) {
   await step('calendar_connections', async () => {
     const { error } = await supabase.from('calendar_connections')
       .delete().eq('owner_type', 'client').eq('owner_id', clientId);
-    if (error && error.code !== '42P01') throw new Error(error.message);
+    if (error && !isMissing(error)) throw new Error(error.message);
     return {};
   });
 
@@ -171,7 +195,16 @@ export async function DELETE(req, context) {
     const { error } = await supabase.from('invite_tokens')
       .update({ used_by_client_id: null, client_name: null, client_phone: null })
       .eq('used_by_client_id', clientId);
-    if (error) throw new Error(error.message);
+    if (error && !isMissing(error)) throw new Error(error.message);
+    return {};
+  });
+
+  // The bot's older invites table keeps the name the coach typed.
+  await step('invites', async () => {
+    const { error } = await supabase.from('invites')
+      .update({ used_by_client: null, name: null })
+      .eq('used_by_client', clientId);
+    if (error && !isMissing(error)) throw new Error(error.message);
     return {};
   });
 

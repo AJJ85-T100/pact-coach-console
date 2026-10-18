@@ -38,12 +38,21 @@ const BY_CLIENT_ID = [
   'weekly_pacts', 'weekend_pacts', 'stakes', 'cosigners', 'client_memory',
   'programme', 'activities', 'coach_notes', 'terra_connections', 'appointments',
   'lift_history', 'pact_checkins', 'calendar_days', 'workout_logs', 'set_logs',
-  'form_clips', 'programs',
+  'form_clips', 'programs', 'notifications',
+  // V2 engine (2026-10-18). Same list as the engine's domain/athleteData.ts.
+  'interventions', 'athlete_events', 'athlete_state_daily', 'consents',
+  'push_tokens', 'brief_claims', 'scheduled_sends',
 ];
+
+// Tables keyed by intervention_id: the outcome of each message, the coach's verdict on it.
+const BY_INTERVENTION_ID = ['intervention_outcomes', 'coach_labels'];
+
+// 42P01 = Postgres; PGRST205 = newer PostgREST "could not find the table".
+const isMissing = (e) => e && (e.code === '42P01' || e.code === 'PGRST205');
 
 // Columns never returned: platform credentials, not personal data, and
 // exporting them would hand out a working key.
-const REDACT = new Set(['console_token', 'wa_api_key', 'refresh_token', 'access_token']);
+const REDACT = new Set(['console_token', 'wa_api_key', 'refresh_token', 'access_token', 'telegram_link_code']);
 
 function scrub(rows) {
   if (!Array.isArray(rows)) return rows;
@@ -85,20 +94,33 @@ export async function GET(req, context) {
         'Free-text conversations are their messages with PAX and PAX\'s replies. ' +
         'Platform credentials are excluded — they are not personal data.',
       your_rights:
-        'To correct or erase any of this, contact hello@pact.healthcare or your coach. ' +
-        'Erasure removes every section below, the stored form-check videos, and your sign-in.',
+        'To correct any of this, contact hello@pact.healthcare or your coach. In the PACT app, Settings → Your data → Delete my account erases it. ' +
+        'Erasure removes every section below, the stored form-check videos and your sign-in.',
     },
     profile: scrub([client])[0],
   };
 
-  // Sequential rather than parallel: this runs rarely, and a burst of 27
+  // Sequential rather than parallel: this runs rarely, and a burst of 40
   // concurrent queries against the pooler is a worse trade than a few
   // extra seconds.
   const missing = [];
   for (const table of BY_CLIENT_ID) {
     const { data, error } = await supabase.from(table).select('*').eq('client_id', clientId);
     if (error) {
-      if (error.code === '42P01') { missing.push(table); continue; } // not on this deployment
+      if (isMissing(error)) { missing.push(table); continue; } // not on this deployment
+      console.error(`[export] ${table}:`, error.message);
+      bundle[table] = { error: 'could not be read' };
+      continue;
+    }
+    bundle[table] = scrub(data || []);
+  }
+
+  const interventionIds = (Array.isArray(bundle.interventions) ? bundle.interventions : []).map((r) => r.id).filter(Boolean);
+  for (const table of BY_INTERVENTION_ID) {
+    if (!interventionIds.length) { bundle[table] = []; continue; }
+    const { data, error } = await supabase.from(table).select('*').in('intervention_id', interventionIds);
+    if (error) {
+      if (isMissing(error)) { missing.push(table); continue; }
       console.error(`[export] ${table}:`, error.message);
       bundle[table] = { error: 'could not be read' };
       continue;
