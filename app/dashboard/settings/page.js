@@ -6,6 +6,7 @@ import CoachRules from '@/components/CoachRules';
 import V2Roster from '@/components/V2Roster';
 import EscalationAlerts from '@/components/EscalationAlerts';
 import BusinessSettings from '@/components/BusinessSettings';
+import ConnectClaude from '@/components/ConnectClaude';
 
 /**
  * /dashboard/settings — coach settings, leading with voice calibration.
@@ -50,6 +51,14 @@ export default async function SettingsPage() {
         </p>
       </div>
       <EscalationAlerts />
+
+      <div className="mt-10 mb-4" id="claude">
+        <h2 className="font-display font-extrabold text-blue text-xl uppercase tracking-tight">Connect Claude</h2>
+        <p className="text-muted text-sm mt-1.5 leading-relaxed max-w-xl">
+          Ask Claude about your roster in plain English. It reads the same live data as this console, and never sees what your athletes typed.
+        </p>
+      </div>
+      <ConnectClaude />
 
       <div className="mt-10 mb-4" id="business">
         <h2 className="font-display font-extrabold text-blue text-xl uppercase tracking-tight">Business</h2>
