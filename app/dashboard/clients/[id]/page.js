@@ -14,6 +14,7 @@ import StrengthSmalls from '@/components/athlete/StrengthSmalls';
 import DoThisNext from '@/components/athlete/DoThisNext';
 import TargetBars from '@/components/athlete/TargetBars';
 import TrendCard from '@/components/athlete/TrendCard';
+import CheckinCard from '@/components/athlete/CheckinCard';
 import ov from '@/components/athlete/overview.module.css';
 import { deriveJourney, dayKey, addDays } from '@/lib/athlete/metrics';
 import {
@@ -105,7 +106,7 @@ export default async function ClientDetailPage({ params, searchParams }) {
     customPactsR, weeklyPactR, weekendPactR,
     stakesR, cosignersR, winStackR, moodR,
     progsR, terraR, workoutsR,
-    planR, stateR, consentsR, ivR, recentUserR, rulesR, rosterR,
+    planR, stateR, consentsR, ivR, recentUserR, rulesR, rosterR, checkinsR,
   ] = await Promise.all([
     // Conversation history (last 30)
     service.from('conversations')
@@ -263,6 +264,8 @@ export default async function ClientDetailPage({ params, searchParams }) {
     // the same source as Settings → CoachRules and V2Roster.
     engineFetch('/v1/coach/rules'),
     engineFetch('/v1/coach/roster'),
+    // Weekly check-ins the athlete sent from the app.
+    engineFetch(`/v1/checkins/${client.id}?limit=4`),
   ]);
 
   // ============================================================
@@ -420,6 +423,8 @@ export default async function ClientDetailPage({ params, searchParams }) {
   const latestState = stateRows[0] || null;
   const consents    = consentsR.error ? null : (consentsR.data || []);
   const ivs         = ivR.data || [];
+  // null = engine unreachable (card hidden); [] = nothing sent yet.
+  const checkins    = checkinsR.status === 200 && Array.isArray(checkinsR.json?.checkins) ? checkinsR.json.checkins : null;
   const rules       = rulesR.status === 200 && rulesR.json && !rulesR.json.error ? rulesR.json : null;
   const rosterRow   = rosterR.status === 200
     ? (rosterR.json?.athletes || []).find(a => a.clientId === client.id) || null
@@ -578,6 +583,8 @@ export default async function ClientDetailPage({ params, searchParams }) {
             </div>
 
             <div className="flex flex-col gap-5 min-w-0">
+              <CheckinCard checkins={checkins} firstName={firstName} />
+
               <ProfileCard client={client} firstName={firstName} />
 
               {/* PAX rules — the coach's rules, as the engine applies them */}
