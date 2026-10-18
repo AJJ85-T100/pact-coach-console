@@ -9,6 +9,7 @@
  * ownership and writes the coach_labels row. Never write V2 rows from here.
  */
 import { useCallback, useEffect, useState } from 'react';
+import { createClient } from '@/lib/supabase/client';
 
 export function ago(iso) {
   const min = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
@@ -26,6 +27,12 @@ export function humanAngle(a) {
 export const SLOT = { morning: 'Morning', midday: 'Midday', evening: 'Evening' };
 
 /**
+ * Live: a new escalation or draft is an interventions row, published to
+ * Supabase Realtime (migration 2026-10-18_realtime_interventions.sql). Any
+ * change is only a nudge to re-ask the engine, which stays the source of
+ * truth; RLS means a coach hears only about their own athletes. The poll
+ * stays as a safety net (and is all there is until the migration runs).
+ *
  * @param opts.pollMs  refresh interval (default 60s)
  * @param opts.onDone  called after a successful action (e.g. router.refresh)
  */
@@ -54,6 +61,29 @@ export function useNeedsYou({ pollMs = 60000, onDone } = {}) {
     const t = setInterval(load, pollMs);
     return () => clearInterval(t);
   }, [load, pollMs]);
+
+  useEffect(() => {
+    let supabase;
+    try {
+      supabase = createClient();
+    } catch {
+      return undefined; // no browser client (tests, missing env): the poll still runs
+    }
+    let timer;
+    // A burst of writes (a draft, then its label) is one refresh.
+    const nudge = () => {
+      clearTimeout(timer);
+      timer = setTimeout(load, 800);
+    };
+    const channel = supabase
+      .channel('needs-you')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'interventions' }, nudge)
+      .subscribe();
+    return () => {
+      clearTimeout(timer);
+      supabase.removeChannel(channel);
+    };
+  }, [load]);
 
   async function act(id, body) {
     setBusy((b) => ({ ...b, [id]: true }));
