@@ -13,7 +13,7 @@ import { NextResponse } from 'next/server';
 import { unstable_noStore as noStore } from 'next/cache';
 import { supabaseAdmin as supabase } from '@/lib/supabase/admin';
 import { requireClientAccess } from '@/lib/auth/requireClientAccess';
-import { sendCoachCalendarEvent } from '@/lib/bot/calendar';
+import { sendCoachCalendarEvent } from '@/lib/calendar';
 
 export const dynamic = 'force-dynamic';
 
