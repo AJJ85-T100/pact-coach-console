@@ -9,7 +9,7 @@
 import { NextResponse } from 'next/server';
 import { unstable_noStore as noStore } from 'next/cache';
 import { requireCoach } from '@/lib/auth/requireCoach';
-import { relayToAthlete } from '@/lib/bot/relay';
+import { relayToAthlete } from '@/lib/relay';
 
 export const dynamic = 'force-dynamic';
 

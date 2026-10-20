@@ -302,20 +302,8 @@ export async function POST(request) {
       console.error('[onboard] milestone insert failed (non-fatal)', e);
     }
 
-    // Fire PAX's WhatsApp welcome (approved template) via the bot — the
-    // compliant first touch on the client's cold number. Non-fatal.
-    try {
-      const botUrl = process.env.BOT_URL;
-      if (botUrl && process.env.WELCOME_SECRET && waDigits) {
-        await fetch(`${botUrl.replace(/\/$/, '')}/welcome`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-welcome-secret': process.env.WELCOME_SECRET },
-          body: JSON.stringify({ client_id: client.id }),
-        });
-      }
-    } catch (e) {
-      console.error('[onboard] PAX welcome trigger failed (non-fatal)', e);
-    }
+    // First touch on chat: the engine says hello when they tap "Connect Telegram"
+    // (WhatsApp, and the bot's welcome template, are switched off).
 
     // Email the coach (Resend). Env-gated so it silently no-ops until configured.
     try {

@@ -9,7 +9,7 @@ The coach's side of PACT. Vercel auto-deploys `main` to pact-coach-console.verce
 - Settings (`app/dashboard/settings/page.js`): `CoachRules.js` (windows, quiet hours, daily limit, never-topics, approval mode) and `V2Roster.js` (per-athlete V2 switch). Proxies in `app/api/settings/rules`, `app/api/roster-v2`.
 
 ## Older pieces
-Nudges and relays go to the bot (`BOT_URL` + `NUDGE_SECRET`, see `app/api/nudge`, `lib/bot/relay.js`). `/api/conversation/[clientId]` is the reference pattern for RLS-scoped reads through the coach's session.
+Nudges (`app/api/nudge`), relays (`lib/relay.js`) and the coach's Google Calendar (`lib/calendar.js`) go to the engine as the signed-in coach. The console no longer calls the Railway bot (`BOT_URL`, `NUDGE_SECRET`, `WELCOME_SECRET` can be removed from Vercel). `/api/conversation/[clientId]` is the reference pattern for RLS-scoped reads through the coach's session.
 
 ## Rules
 - Every coach action on a V2 item must go through the engine so it writes `coach_labels`.
