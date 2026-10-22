@@ -1,0 +1,69 @@
+/* Focus and phase editor — from the approved mockup (CoachFocus.dc.html). */
+
+.segs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 14px; }
+@media (max-width: 640px) { .segs { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+.seg {
+  min-height: 56px;
+  padding: 10px 12px;
+  border: 1px solid #DCE2EA;
+  background: #fff;
+  color: #0A2540;
+  font: 600 14px Inter, system-ui, sans-serif;
+  cursor: pointer;
+  text-align: left;
+  border-radius: 0;
+}
+.seg:hover { border-color: #0A2540; }
+.seg:focus-visible { outline: 2px solid #0A2540; outline-offset: 2px; }
+.segOn { border: 2px solid #0A2540; background: #F4F6F8; padding: 9px 11px; }
+.segSub { display: block; font: 400 12px Inter, system-ui, sans-serif; color: #5B6B7F; margin-top: 2px; }
+
+.fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+
+.habits { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+.habit {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 60px;
+  padding: 10px 14px;
+  border: 1px solid #DCE2EA;
+  background: #fff;
+  color: #0A2540;
+  cursor: pointer;
+}
+.habit:hover { border-color: #0A2540; }
+.habit:focus-within { outline: 2px solid #0A2540; outline-offset: 2px; }
+.habitOn, .habitOn:hover { border: 2px solid #D92D20; padding: 9px 13px; }
+
+.radio { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; pointer-events: none; }
+
+.dot {
+  width: 20px; height: 20px; border-radius: 10px;
+  border: 2px solid #C9D3DC; box-sizing: border-box; flex: none;
+  display: flex; align-items: center; justify-content: center;
+}
+.dotOn { border-color: #D92D20; }
+.dotOn::after { content: ''; width: 10px; height: 10px; border-radius: 5px; background: #D92D20; display: block; }
+
+.name { display: block; font: 600 15px Inter, system-ui, sans-serif; }
+.anchor { display: block; font-size: 13px; color: #5B6B7F; margin-top: 2px; }
+.rate { font: 600 13px Inter, system-ui, sans-serif; color: #5B6B7F; white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+.row { display: flex; gap: 16px; align-items: center; margin-top: 14px; flex-wrap: wrap; }
+.fieldLbl { font: 600 14px Inter, system-ui, sans-serif; color: #0A2540; }
+.input {
+  height: 44px;
+  border: 1px solid #C9D3DC;
+  padding: 0 10px;
+  font: 600 14px Inter, system-ui, sans-serif;
+  color: #0A2540;
+  background: #fff;
+  border-radius: 0;
+}
+.input:focus { outline: none; border-color: #0A2540; }
+.hint { font-size: 13px; color: #5B6B7F; margin: 0; }
+.ok { font: 600 14px Inter, system-ui, sans-serif; color: #1B6E3A; margin: 0; }
+.err { font: 600 14px Inter, system-ui, sans-serif; color: #B42318; margin: 0; }
+.legend { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; width: 100%; padding: 0; }

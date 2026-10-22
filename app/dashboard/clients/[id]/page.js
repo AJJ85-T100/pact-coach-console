@@ -15,6 +15,8 @@ import DoThisNext from '@/components/athlete/DoThisNext';
 import TargetBars from '@/components/athlete/TargetBars';
 import TrendCard from '@/components/athlete/TrendCard';
 import CheckinCard from '@/components/athlete/CheckinCard';
+import FocusSummary from '@/components/athlete/FocusSummary';
+import FocusPhase from '@/components/athlete/FocusPhase';
 import ov from '@/components/athlete/overview.module.css';
 import { deriveJourney, dayKey, addDays } from '@/lib/athlete/metrics';
 import {
@@ -106,7 +108,7 @@ export default async function ClientDetailPage({ params, searchParams }) {
     customPactsR, weeklyPactR, weekendPactR,
     stakesR, cosignersR, winStackR, moodR,
     progsR, terraR, workoutsR,
-    planR, stateR, consentsR, ivR, recentUserR, rulesR, rosterR, checkinsR,
+    planR, stateR, consentsR, ivR, recentUserR, rulesR, rosterR, checkinsR, focusR,
   ] = await Promise.all([
     // Conversation history (last 30)
     service.from('conversations')
@@ -266,6 +268,8 @@ export default async function ClientDetailPage({ params, searchParams }) {
     engineFetch('/v1/coach/roster'),
     // Weekly check-ins the athlete sent from the app.
     engineFetch(`/v1/checkins/${client.id}?limit=4`),
+    // Phase and this month's focus (Settings → FocusPhase edits it).
+    engineFetch(`/v1/coach/athletes/${encodeURIComponent(client.id)}/plan`),
   ]);
 
   // ============================================================
@@ -425,6 +429,7 @@ export default async function ClientDetailPage({ params, searchParams }) {
   const ivs         = ivR.data || [];
   // null = engine unreachable (card hidden); [] = nothing sent yet.
   const checkins    = checkinsR.status === 200 && Array.isArray(checkinsR.json?.checkins) ? checkinsR.json.checkins : null;
+  const focusPlan   = focusR.status === 200 && focusR.json && !focusR.json.error ? focusR.json : null;
   const rules       = rulesR.status === 200 && rulesR.json && !rulesR.json.error ? rulesR.json : null;
   const rosterRow   = rosterR.status === 200
     ? (rosterR.json?.athletes || []).find(a => a.clientId === client.id) || null
@@ -583,6 +588,8 @@ export default async function ClientDetailPage({ params, searchParams }) {
             </div>
 
             <div className="flex flex-col gap-5 min-w-0">
+              <FocusSummary plan={focusPlan} href={tabHref('settings')} />
+
               <CheckinCard checkins={checkins} firstName={firstName} />
 
               <ProfileCard client={client} firstName={firstName} />
@@ -1034,6 +1041,7 @@ export default async function ClientDetailPage({ params, searchParams }) {
           ============================================================ */}
       {tab === 'settings' && (
         <div className="max-w-3xl space-y-5">
+          <FocusPhase clientId={client.id} firstName={firstName} />
           <NudgeTool clientId={client.id} clientFirstName={(client.name || '').split(' ')[0]} />
           <AthleteBilling clientId={client.id} firstName={firstName} />
           <DangerZone clientId={client.id} clientName={client.name || ''} />
