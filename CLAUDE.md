@@ -16,6 +16,7 @@ Nudges (`app/api/nudge`), relays (`lib/relay.js`) and the coach's Google Calenda
 
 ## Rules
 - Every coach action on a V2 item must go through the engine so it writes `coach_labels`.
+- Athlete data list: a coach's delete and export both read `lib/athleteData.js`, which mirrors the engine's `engine/src/domain/athleteData.ts`. When a table is added there, add it to the console list in the same place, then run `node scripts/check-erase-list.mjs` (exits non-zero if they differ; it finds the engine at `~/fitness-coach-bot`, or set `PACT_ENGINE_DIR`).
 - Coaches can see and send consent links but must never record consent for an athlete.
 - Alex's Mac copy may have uncommitted work (exercise browser, `app/dashboard/layout.js`, `components/ExerciseBrowser.js`). Don't modify those files without asking.
 
