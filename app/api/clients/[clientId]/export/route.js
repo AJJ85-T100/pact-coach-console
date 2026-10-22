@@ -42,6 +42,9 @@ const BY_CLIENT_ID = [
   // V2 engine (2026-10-18). Same list as the engine's domain/athleteData.ts.
   'interventions', 'athlete_events', 'athlete_state_daily', 'consents',
   'push_tokens', 'brief_claims', 'scheduled_sends',
+  // Weekly check-ins and their progress photos (2026-10-22). The photo files live in
+  // the private checkin-photos bucket; the athlete's own export (engine) adds links.
+  'weekly_checkins', 'checkin_photos',
 ];
 
 // Tables keyed by intervention_id: the outcome of each message, the coach's verdict on it.
@@ -95,7 +98,7 @@ export async function GET(req, context) {
         'Platform credentials are excluded — they are not personal data.',
       your_rights:
         'To correct any of this, contact hello@pact.healthcare or your coach. In the PACT app, Settings → Your data → Delete my account erases it. ' +
-        'Erasure removes every section below, the stored form-check videos and your sign-in.',
+        'Erasure removes every section below, the stored form-check videos, the check-in progress photos and your sign-in.',
     },
     profile: scrub([client])[0],
   };

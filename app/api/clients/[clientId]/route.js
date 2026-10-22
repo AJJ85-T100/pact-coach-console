@@ -50,6 +50,8 @@ const CHILD_TABLES = [
   // receipt shows them and the list matches the engine's domain/athleteData.ts.
   'athlete_events', 'athlete_state_daily', 'consents', 'push_tokens',
   'brief_claims', 'scheduled_sends',
+  // Weekly check-ins and their progress photos (2026-10-22); the files go below.
+  'weekly_checkins', 'checkin_photos',
 ];
 
 // 42P01 = Postgres; PGRST205 = newer PostgREST "could not find the table".
@@ -110,6 +112,7 @@ export async function DELETE(req, context) {
   // Grab the auth link and the storage paths BEFORE the rows go.
   let authUserId = null;
   let clipPaths = [];
+  let photoPaths = [];
   await step('collect', async () => {
     const { data: c } = await supabase.from('clients')
       .select('auth_user_id').eq('id', clientId).maybeSingle();
@@ -117,8 +120,20 @@ export async function DELETE(req, context) {
     const { data: clips } = await supabase.from('form_clips')
       .select('storage_path').eq('client_id', clientId);
     clipPaths = (clips || []).map(r => r.storage_path).filter(Boolean);
-    return { clips: clipPaths.length };
+    const { data: photos } = await supabase.from('checkin_photos')
+      .select('storage_path').eq('client_id', clientId);
+    photoPaths = (photos || []).map(r => r.storage_path).filter(Boolean);
+    return { clips: clipPaths.length, photos: photoPaths.length };
   });
+
+  // Check-in progress photos: the images go with their rows.
+  if (photoPaths.length) {
+    await step('storage:checkin-photos', async () => {
+      const { error } = await supabase.storage.from('checkin-photos').remove(photoPaths);
+      if (error) throw new Error(error.message);
+      return { removed: photoPaths.length };
+    });
+  }
 
   // Form clip objects. The rows are deleted below; without this the videos
   // themselves survive in the bucket with nothing pointing at them.

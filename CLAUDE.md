@@ -8,6 +8,7 @@ The coach's side of PACT. Vercel auto-deploys `main` to pact-coach-console.verce
 - `components/OutcomesPanel.js`: what's working, from `/v1/coach/outcomes`.
 - Settings (`app/dashboard/settings/page.js`): `CoachRules.js` (windows, quiet hours, daily limit, never-topics, approval mode) and `V2Roster.js` (per-athlete V2 switch). Proxies in `app/api/settings/rules`, `app/api/roster-v2`.
 
+- Progress photos (coach-only, from the athlete's weekly check-in): roster cards show start vs latest (`photos` on each roster card), the athlete page's Overview shows start vs latest plus every week by pose (`components/athlete/PhotoCompare.js`, engine `GET /v1/checkin/photos/:clientId`). URLs are signed by the engine for 10 minutes; never cache them. The coach-side export/erase lists include `weekly_checkins` and `checkin_photos` and erase removes the files from the private `checkin-photos` bucket.
 - Roster (`app/dashboard/athletes/page.js` → `components/roster/RosterBoard.js`): cards (phone first) and a list, from engine `/v1/coach/roster-cards`. Status needs you / drifting / on track / not started with the reason; colour only means status; weight green only when it moves the way the phase wants. Design: Claude Design canvas *PACT Coach Roster — Redesign* (v2).
 
 ## Older pieces

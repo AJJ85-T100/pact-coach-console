@@ -56,6 +56,31 @@ function Spark({ points, good, width = 104, height = 32 }) {
   );
 }
 
+const shortDate = (iso) => new Date(`${iso}T12:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+
+/** Start vs latest check-in photo, same pose, side by side. Signed URLs from the engine, coach-only. */
+function Photos({ photos, name }) {
+  if (!photos?.start) return null;
+  const first = name.split(' ')[0];
+  const frame = (p, cap, empty) => (
+    <figure style={{ margin: 0, flex: 1, minWidth: 0, height: 132, position: 'relative', background: '#EEF2F6', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+      {p ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={p.url} alt={`${first}, ${cap}`} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+      ) : (
+        <span style={{ font: '600 12px Inter, sans-serif', color: '#5B6B7F', padding: 10, textAlign: 'center' }}>{empty}</span>
+      )}
+      <figcaption style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: '4px 6px', font: '600 11px Inter, sans-serif', color: '#FFFFFF', background: 'rgba(10,37,64,.75)' }}>{cap}</figcaption>
+    </figure>
+  );
+  return (
+    <div style={{ padding: '12px 14px 0', display: 'flex', gap: 6 }}>
+      {frame(photos.start, `Start · ${shortDate(photos.start.date)}`)}
+      {frame(photos.latest, photos.latest ? `Latest · ${shortDate(photos.latest.date)}` : 'Latest', 'Next check-in photo goes here')}
+    </div>
+  );
+}
+
 function Squares({ week, size = 14 }) {
   if (!week?.length) return null;
   return (
@@ -92,6 +117,8 @@ function Card({ a, today }) {
           </div>
         </div>
       </div>
+
+      {a.status !== 'new' && <Photos photos={a.photos} name={a.name} />}
 
       {a.status !== 'new' && (a.week.length > 0 || w) && (
         <div style={{ padding: '14px 14px 0', display: 'flex', gap: 14, alignItems: 'flex-end' }}>
@@ -225,7 +252,7 @@ export default function RosterBoard({ cards, today }) {
       )}
 
       <p style={{ margin: 0, font: '500 13px Inter, sans-serif', color: '#5B6B7F' }}>
-        Squares: this week, all targets together. Navy kept, dashed missed, pale not yet or no data.
+        Photos: the start and the latest check-in, same pose, side by side. Squares: this week, all targets together. Navy kept, dashed missed, pale not yet or no data.
       </p>
     </div>
   );

@@ -15,6 +15,7 @@ import DoThisNext from '@/components/athlete/DoThisNext';
 import TargetBars from '@/components/athlete/TargetBars';
 import TrendCard from '@/components/athlete/TrendCard';
 import CheckinCard from '@/components/athlete/CheckinCard';
+import PhotoCompare from '@/components/athlete/PhotoCompare';
 import FocusSummary from '@/components/athlete/FocusSummary';
 import FocusPhase from '@/components/athlete/FocusPhase';
 import ov from '@/components/athlete/overview.module.css';
@@ -108,7 +109,7 @@ export default async function ClientDetailPage({ params, searchParams }) {
     customPactsR, weeklyPactR, weekendPactR,
     stakesR, cosignersR, winStackR, moodR,
     progsR, terraR, workoutsR,
-    planR, stateR, consentsR, ivR, recentUserR, rulesR, rosterR, checkinsR, focusR,
+    planR, stateR, consentsR, ivR, recentUserR, rulesR, rosterR, checkinsR, focusR, photosR,
   ] = await Promise.all([
     // Conversation history (last 30)
     service.from('conversations')
@@ -270,6 +271,8 @@ export default async function ClientDetailPage({ params, searchParams }) {
     engineFetch(`/v1/checkins/${client.id}?limit=4`),
     // Phase and this month's focus (Settings → FocusPhase edits it).
     engineFetch(`/v1/coach/athletes/${encodeURIComponent(client.id)}/plan`),
+    // Progress photos from their check-ins (coach-only; signed for 10 minutes).
+    engineFetch(`/v1/checkin/photos/${encodeURIComponent(client.id)}?limit=12`),
   ]);
 
   // ============================================================
@@ -430,6 +433,7 @@ export default async function ClientDetailPage({ params, searchParams }) {
   // null = engine unreachable (card hidden); [] = nothing sent yet.
   const checkins    = checkinsR.status === 200 && Array.isArray(checkinsR.json?.checkins) ? checkinsR.json.checkins : null;
   const focusPlan   = focusR.status === 200 && focusR.json && !focusR.json.error ? focusR.json : null;
+  const photoWeeks  = photosR.status === 200 && Array.isArray(photosR.json?.weeks) ? photosR.json.weeks : null;
   const rules       = rulesR.status === 200 && rulesR.json && !rulesR.json.error ? rulesR.json : null;
   const rosterRow   = rosterR.status === 200
     ? (rosterR.json?.athletes || []).find(a => a.clientId === client.id) || null
@@ -591,6 +595,8 @@ export default async function ClientDetailPage({ params, searchParams }) {
               <FocusSummary plan={focusPlan} href={tabHref('settings')} />
 
               <CheckinCard checkins={checkins} firstName={firstName} />
+
+              <PhotoCompare weeks={photoWeeks} firstName={firstName} />
 
               <ProfileCard client={client} firstName={firstName} />
 
