@@ -8,6 +8,8 @@ The coach's side of PACT. Vercel auto-deploys `main` to pact-coach-console.verce
 - `components/OutcomesPanel.js`: what's working, from `/v1/coach/outcomes`.
 - Settings (`app/dashboard/settings/page.js`): `CoachRules.js` (windows, quiet hours, daily limit, never-topics, approval mode) and `V2Roster.js` (per-athlete V2 switch). Proxies in `app/api/settings/rules`, `app/api/roster-v2`.
 
+- Roster (`app/dashboard/athletes/page.js` → `components/roster/RosterBoard.js`): cards (phone first) and a list, from engine `/v1/coach/roster-cards`. Status needs you / drifting / on track / not started with the reason; colour only means status; weight green only when it moves the way the phase wants. Design: Claude Design canvas *PACT Coach Roster — Redesign* (v2).
+
 ## Older pieces
 Nudges (`app/api/nudge`), relays (`lib/relay.js`) and the coach's Google Calendar (`lib/calendar.js`) go to the engine as the signed-in coach. The console no longer calls the Railway bot (`BOT_URL`, `NUDGE_SECRET`, `WELCOME_SECRET` can be removed from Vercel). `/api/conversation/[clientId]` is the reference pattern for RLS-scoped reads through the coach's session.
 
