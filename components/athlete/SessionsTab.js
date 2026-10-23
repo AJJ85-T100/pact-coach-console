@@ -12,14 +12,18 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import s from './overview.module.css';
+import PaxKnows from './PaxKnows';
 
 const WD_JS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 export default function SessionsTab({ clientId, firstName, trainingDays }) {
+  // Facts PAX picked out of the note just saved, waiting for keep / bin.
+  const [proposals, setProposals] = useState([]);
   return (
     <div className="flex flex-col gap-5 max-w-3xl">
       <Appointments clientId={clientId} firstName={firstName} trainingDays={trainingDays} />
-      <SessionNotes clientId={clientId} firstName={firstName} />
+      <SessionNotes clientId={clientId} firstName={firstName} onProposals={setProposals} />
+      <PaxKnows clientId={clientId} firstName={firstName} proposals={proposals} onProposalsDone={() => setProposals([])} />
     </div>
   );
 }
@@ -118,7 +122,7 @@ function Appointments({ clientId, firstName, trainingDays }) {
   );
 }
 
-function SessionNotes({ clientId, firstName }) {
+function SessionNotes({ clientId, firstName, onProposals }) {
   const [list, setList] = useState(null);
   const [text, setText] = useState('');
   const [saving, setSaving] = useState(false);
@@ -180,8 +184,16 @@ function SessionNotes({ clientId, firstName }) {
         body: JSON.stringify({ clientId, note: text.trim() || null }),
       });
       if (!r.ok) throw new Error();
+      const saved = text.trim();
       setText('');
       await load();
+      // Ask PAX for the lasting facts in it. Nothing is kept until the coach says so.
+      if (saved.length >= 15) {
+        fetch(`/api/athletes/${clientId}/note-facts`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: saved }) })
+          .then((x) => x.json())
+          .then((j) => { if (Array.isArray(j?.facts) && j.facts.length) onProposals?.(j.facts); })
+          .catch(() => {});
+      }
     } catch {
       setErr('Couldn’t save that. Your note is still here; try again.');
     }
@@ -193,7 +205,7 @@ function SessionNotes({ clientId, firstName }) {
     <section className={s.card} aria-labelledby="sess-notes" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div>
         <h2 id="sess-notes" className={s.h} style={{ fontSize: 15 }}>Session notes</h2>
-        <p className="mt-1 mb-0 text-[13px] text-[#5B6B7F]">For you only. {firstName} doesn’t see these.</p>
+        <p className="mt-1 mb-0 text-[13px] text-[#5B6B7F]">{firstName} never sees these. PAX reads them so its messages fit what you saw, and offers to remember anything lasting.</p>
       </div>
       <label htmlFor="sess-note" className="sr-only">What happened in the session</label>
       <textarea
