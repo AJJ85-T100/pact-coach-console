@@ -1,7 +1,7 @@
 /**
  * POST /api/needs-you/[id]
  *   { kind: 'draft', action: 'approve' | 'edit' | 'reject', text? }
- *   { kind: 'escalation', action: 'handled' }
+ *   { kind: 'escalation', action: 'handled' }   also clears a quiet flag (same engine route)
  *   { kind: 'consent' }   send the athlete their consent link (id = client id)
  * Proxies to the engine as the signed-in coach; the engine checks ownership.
  */

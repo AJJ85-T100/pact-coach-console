@@ -11,6 +11,9 @@
 .cardAlert {
   border: 2px solid #D92D20;
 }
+.cardQuiet {
+  border: 2px solid #0A2540;
+}
 
 .lbl {
   font-size: 11px;

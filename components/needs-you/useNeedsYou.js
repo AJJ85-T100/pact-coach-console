@@ -1,9 +1,10 @@
 'use client';
 
 /**
- * useNeedsYou — the coach's V2 queue (escalations, drafts, drifting athletes,
- * consent needed) and the actions on it. Shared by NeedsYouToday (whole
- * roster, My Day) and the athlete page's "Do this next" (one athlete).
+ * useNeedsYou — the coach's V2 queue (escalations, athletes going quiet,
+ * drafts, drifting athletes, consent needed) and the actions on it. Shared
+ * by NeedsYouToday (whole roster, My Day) and the athlete page's "Do this
+ * next" (one athlete).
  *
  * Every action goes through /api/needs-you/[id] → the engine, which checks
  * ownership and writes the coach_labels row. Never write V2 rows from here.
@@ -25,6 +26,15 @@ export function humanAngle(a) {
 }
 
 export const SLOT = { morning: 'Morning', midday: 'Midday', evening: 'Evening' };
+
+/**
+ * The Cortex's quiet signals (engine domain/quiet.ts), as the coach reads
+ * them. Unknown keys fall back to the key with its casing spelled out.
+ */
+const QUIET_SIGNAL = { logging: 'logging', reply: 'replies', checkin: 'check-in', focus: 'focus', mood: 'mood', weighIn: 'weigh-ins' };
+export function quietSignalLabel(k) {
+  return QUIET_SIGNAL[k] ?? String(k).replace(/([a-z])([A-Z])/g, '$1 $2').replace(/_/g, ' ').toLowerCase();
+}
 
 /**
  * Live: a new escalation or draft is an interventions row, published to
@@ -75,8 +85,10 @@ export function useNeedsYou({ pollMs = 60000, onDone } = {}) {
       clearTimeout(timer);
       timer = setTimeout(load, 800);
     };
+    // One topic per mount: supabase-js hands back an existing channel with the
+    // same name, and adding callbacks to a subscribed channel throws.
     const channel = supabase
-      .channel('needs-you')
+      .channel(`needs-you-${Math.random().toString(36).slice(2)}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'interventions' }, nudge)
       .subscribe();
     return () => {
