@@ -2,13 +2,15 @@
 
 /**
  * Do this next — the athlete page's slice of Needs you today: this athlete's
- * open escalations and PAX drafts awaiting approval (plus a consent link if
- * PAX can't coach them yet). Same data and the same engine actions as
- * NeedsYouToday, via useNeedsYou, so every button writes a coach_labels row.
+ * open escalations, the Cortex's going-quiet flag (GoingQuiet) and PAX drafts
+ * awaiting approval (plus a consent link if PAX can't coach them yet). Same
+ * data and the same engine actions as NeedsYouToday, via useNeedsYou, so
+ * every button writes a coach_labels row.
  */
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useNeedsYou, ago, humanAngle, SLOT } from '@/components/needs-you/useNeedsYou';
+import GoingQuiet from './GoingQuiet';
 import s from './overview.module.css';
 
 const ESC_COLOR = { crisis: '#B42318', medical: '#B42318', eating: '#B42318', distress: '#B54708', pain: '#B54708', quit: '#0A2540' };
@@ -19,10 +21,11 @@ export default function DoThisNext({ clientId, firstName, conversationHref }) {
 
   const mine = (list) => (list || []).filter((x) => x.clientId === clientId);
   const escalations = mine(data?.escalations);
+  const quiet = mine(data?.quiet)[0] || null;
   const drafts = mine(data?.drafts);
   const consent = mine(data?.needConsent)[0] || null;
   const drift = mine(data?.atRisk)[0] || null;
-  const count = escalations.length + drafts.length + (consent ? 1 : 0);
+  const count = escalations.length + (quiet ? 1 : 0) + drafts.length + (consent ? 1 : 0);
   const loading = !data && !error;
   const name = firstName || 'this athlete';
 
@@ -51,15 +54,20 @@ export default function DoThisNext({ clientId, firstName, conversationHref }) {
 
   const label = escalations.length
     ? 'Needs you personally'
-    : drafts.length
-      ? `PAX draft${drafts.length > 1 ? 's' : ''} · waiting for your approval`
-      : 'Consent needed';
+    : quiet
+      ? 'Going quiet'
+      : drafts.length
+        ? `PAX draft${drafts.length > 1 ? 's' : ''} · waiting for your approval`
+        : 'Consent needed';
+  // A quiet flag on its own is a signal to act on, not an alarm: the card
+  // keeps the brand blue rather than the red alert border.
+  const quietOnly = count === 1 && !!quiet;
 
   return (
-    <section className={`${s.card} ${s.cardAlert}`} aria-labelledby="ov-next" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+    <section className={`${s.card} ${quietOnly ? s.cardQuiet : s.cardAlert}`} aria-labelledby="ov-next" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', gap: 8, alignItems: 'baseline' }}>
         <h2 id="ov-next" className={s.h} style={{ fontSize: 18 }}>Do this next</h2>
-        <p className={s.lbl} style={{ color: '#B42318' }}>{label}</p>
+        <p className={s.lbl} style={{ color: quietOnly ? '#0A2540' : '#B42318' }}>{label}</p>
       </div>
       {error && <p role="alert" style={{ margin: 0, fontSize: 13, color: '#B42318' }}>{error}</p>}
       {drift && <p style={{ margin: 0, fontSize: 15, lineHeight: 1.5, color: '#0A2540' }}>{drift.reasons.join('. ')}.</p>}
@@ -81,6 +89,15 @@ export default function DoThisNext({ clientId, firstName, conversationHref }) {
           </div>
         </div>
       ))}
+
+      {quiet && (
+        <GoingQuiet
+          item={quiet}
+          busy={!!busy[quiet.id]}
+          onHandled={() => act(quiet.id, { kind: 'escalation', action: 'handled' })}
+          conversationHref={conversationHref}
+        />
+      )}
 
       {drafts.map((d) => {
         const isEditing = editing[d.id] !== undefined;

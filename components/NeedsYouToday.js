@@ -7,14 +7,20 @@
  *    (crisis, medical, food/body, distress, pain, wanting to stop). Ranked by
  *    urgency, with their own words. PAX has already sent a safe holding
  *    message; this is the coach's cue to reach out personally.
- * 2. Drafts: messages PAX wrote but is holding for approval (coach rules →
+ * 2. Going quiet: the Cortex's nightly read of each athlete against their own
+ *    history says they've gone quiet (logging, replies, check-ins…). Athletes
+ *    who go quiet early are the ones who leave later, so the coach hears
+ *    first. Message them (via PAX, in the coach's voice) or mark it handled.
+ * 3. Drafts: messages PAX wrote but is holding for approval (coach rules →
  *    approval mode). Approve, edit or bin. Nothing reaches the athlete first.
  *
  * Every button writes a coach label in the engine: that's how PACT learns
  * what good coaching looks like to this coach.
  */
+import { useState } from 'react';
 import Link from 'next/link';
-import { useNeedsYou, ago, humanAngle, SLOT } from '@/components/needs-you/useNeedsYou';
+import NudgeTool from '@/components/NudgeTool';
+import { useNeedsYou, ago, humanAngle, quietSignalLabel, SLOT } from '@/components/needs-you/useNeedsYou';
 
 const TONE = {
   crisis: { bar: 'bg-red', chip: 'bg-red text-white' },
@@ -27,16 +33,18 @@ const TONE = {
 
 export default function NeedsYouToday() {
   const { data, error, busy, editing, setEditing, linkResult, act, sendConsent } = useNeedsYou();
+  const [messaging, setMessaging] = useState({}); // quiet item id → the nudge box is open
 
   if (!data && !error) {
     return <section className="bg-white rounded-lg shadow-card border border-border p-5 text-sm text-muted">Checking what needs you…</section>;
   }
 
   const escalations = data?.escalations ?? [];
+  const quiet = data?.quiet ?? [];
   const drafts = data?.drafts ?? [];
   const atRisk = data?.atRisk ?? [];
   const needConsent = data?.needConsent ?? [];
-  const count = escalations.length + drafts.length + atRisk.length + needConsent.length;
+  const count = escalations.length + quiet.length + drafts.length + atRisk.length + needConsent.length;
   const empty = count === 0;
 
   return (
@@ -81,6 +89,47 @@ export default function NeedsYouToday() {
           </div>
         );
       })}
+
+      {quiet.map((q) => (
+        <div key={q.id} className="relative px-5 py-4 border-b border-border last:border-b-0">
+          <span className="absolute left-0 top-0 bottom-0 w-1 bg-blue" aria-hidden="true" />
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded bg-bg-alt text-blue">going quiet</span>
+                <Link href={`/dashboard/clients/${q.clientId}`} className="font-semibold text-blue hover:underline">{q.athlete}</Link>
+              </div>
+              <p className="text-sm font-semibold text-blue mt-2">{q.headline}</p>
+              {q.evidence && <p className="text-xs text-body mt-1">{q.evidence}</p>}
+              {q.signals?.length > 0 && (
+                <ul className="flex flex-wrap gap-1.5 mt-2 list-none p-0 m-0" aria-label="What moved">
+                  {q.signals.map((k) => (
+                    <li key={k} className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded border border-border text-muted">{quietSignalLabel(k)}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div className="flex flex-col gap-2 shrink-0">
+              <button
+                type="button"
+                aria-expanded={!!messaging[q.id]}
+                onClick={() => setMessaging((m) => ({ ...m, [q.id]: !m[q.id] }))}
+                className={`text-xs font-semibold px-3 py-2 rounded border ${messaging[q.id] ? 'border-blue bg-bg-alt text-blue' : 'border-border text-blue hover:border-blue'}`}
+              >
+                Message
+              </button>
+              <button disabled={busy[q.id]} onClick={() => act(q.id, { kind: 'escalation', action: 'handled' })} className="text-xs font-semibold px-3 py-2 rounded bg-blue text-white hover:bg-blue-light disabled:opacity-50">
+                {busy[q.id] ? 'Saving…' : 'I’ve got this'}
+              </button>
+            </div>
+          </div>
+          {messaging[q.id] && (
+            <div className="mt-4">
+              <NudgeTool clientId={q.clientId} clientFirstName={(q.athlete || '').split(' ')[0]} />
+            </div>
+          )}
+        </div>
+      ))}
 
       {drafts.map((d) => {
         const isEditing = editing[d.id] !== undefined;
