@@ -17,8 +17,8 @@
  * than a coach convenience.
  *
  * The table list is deliberately the same set the erase route removes
- * (app/api/clients/[clientId]/route.js CHILD_TABLES). If you add a table
- * to one, add it to the other — they are two views of the same question:
+ * (lib/athleteData.js, which mirrors the engine's athleteData.ts). Add a
+ * table there and both pick it up — they are two views of the same question:
  * everything we hold about this person.
  */
 
@@ -27,41 +27,20 @@ import { unstable_noStore as noStore } from 'next/cache';
 import { supabaseAdmin as supabase } from '@/lib/supabase/admin';
 import { requireClientAccess } from '@/lib/auth/requireClientAccess';
 import { tokenMatchesClient } from '@/lib/auth/requireCoach';
+import { CLIENT_TABLES, INTERVENTION_TABLES, REDACT, PHOTO_BUCKET, EXPORT_PHOTO_EXPIRY_S, isMissing } from '@/lib/athleteData';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-// Tables keyed directly by client_id.
-const BY_CLIENT_ID = [
-  'conversations', 'health_data', 'daily_pacts', 'custom_pacts', 'win_stack',
-  'weigh_ins', 'milestones', 'slip_events', 'mood_ratings', 'coach_meetings',
-  'weekly_pacts', 'weekend_pacts', 'stakes', 'cosigners', 'client_memory',
-  'programme', 'activities', 'coach_notes', 'terra_connections', 'appointments',
-  'lift_history', 'pact_checkins', 'calendar_days', 'workout_logs', 'set_logs',
-  'form_clips', 'programs', 'notifications',
-  // V2 engine (2026-10-18). Same list as the engine's domain/athleteData.ts.
-  'interventions', 'athlete_events', 'athlete_state_daily', 'consents',
-  'push_tokens', 'brief_claims', 'scheduled_sends',
-  // Weekly check-ins and their progress photos (2026-10-22). The photo files live in
-  // the private checkin-photos bucket; the athlete's own export (engine) adds links.
-  'weekly_checkins', 'checkin_photos',
-];
-
-// Tables keyed by intervention_id: the outcome of each message, the coach's verdict on it.
-const BY_INTERVENTION_ID = ['intervention_outcomes', 'coach_labels'];
-
-// 42P01 = Postgres; PGRST205 = newer PostgREST "could not find the table".
-const isMissing = (e) => e && (e.code === '42P01' || e.code === 'PGRST205');
-
-// Columns never returned: platform credentials, not personal data, and
-// exporting them would hand out a working key.
-const REDACT = new Set(['console_token', 'wa_api_key', 'refresh_token', 'access_token', 'telegram_link_code']);
+// Tables come from lib/athleteData.js, the same list the erase route removes
+// (and a mirror of the engine's athleteData.ts). Workout chain rows are in it too.
+const REDACT_SET = new Set(REDACT);
 
 function scrub(rows) {
   if (!Array.isArray(rows)) return rows;
   return rows.map((r) => {
     const out = {};
-    for (const [k, v] of Object.entries(r || {})) if (!REDACT.has(k)) out[k] = v;
+    for (const [k, v] of Object.entries(r || {})) if (!REDACT_SET.has(k)) out[k] = v;
     return out;
   });
 }
@@ -107,7 +86,7 @@ export async function GET(req, context) {
   // concurrent queries against the pooler is a worse trade than a few
   // extra seconds.
   const missing = [];
-  for (const table of BY_CLIENT_ID) {
+  for (const table of CLIENT_TABLES) {
     const { data, error } = await supabase.from(table).select('*').eq('client_id', clientId);
     if (error) {
       if (isMissing(error)) { missing.push(table); continue; } // not on this deployment
@@ -119,7 +98,7 @@ export async function GET(req, context) {
   }
 
   const interventionIds = (Array.isArray(bundle.interventions) ? bundle.interventions : []).map((r) => r.id).filter(Boolean);
-  for (const table of BY_INTERVENTION_ID) {
+  for (const table of INTERVENTION_TABLES) {
     if (!interventionIds.length) { bundle[table] = []; continue; }
     const { data, error } = await supabase.from(table).select('*').in('intervention_id', interventionIds);
     if (error) {
@@ -131,8 +110,14 @@ export async function GET(req, context) {
     bundle[table] = scrub(data || []);
   }
 
-  // program_sessions hangs off programs, not client_id.
-  const programIds = (bundle.programs || []).map((p) => p.id).filter(Boolean);
+  // programs are keyed by client_id; program_sessions hang off programs.
+  {
+    const { data, error } = await supabase.from('programs').select('*').eq('client_id', clientId);
+    if (error && isMissing(error)) missing.push('programs');
+    else if (error) { console.error('[export] programs:', error.message); bundle.programs = { error: 'could not be read' }; }
+    else bundle.programs = scrub(data || []);
+  }
+  const programIds = (Array.isArray(bundle.programs) ? bundle.programs : []).map((p) => p.id).filter(Boolean);
   if (programIds.length) {
     const { data } = await supabase.from('program_sessions').select('*').in('program_id', programIds);
     bundle.program_sessions = scrub(data || []);
@@ -144,6 +129,26 @@ export async function GET(req, context) {
   const { data: cal } = await supabase.from('calendar_connections')
     .select('*').eq('owner_type', 'client').eq('owner_id', clientId);
   bundle.calendar_connections = scrub(cal || []);
+
+  // The progress photos themselves: links that work for an hour, one per pose per week
+  // (as in the athlete's own export). The bucket is private.
+  const photoRows = Array.isArray(bundle.checkin_photos) ? bundle.checkin_photos : [];
+  const paths = photoRows.map((r) => r.storage_path).filter(Boolean);
+  const signed = new Map();
+  if (paths.length) {
+    const { data, error } = await supabase.storage.from(PHOTO_BUCKET).createSignedUrls(paths, EXPORT_PHOTO_EXPIRY_S);
+    if (error) console.error('[export] checkin photo links:', error.message);
+    for (const d of data || []) if (d.path && d.signedUrl) signed.set(d.path, d.signedUrl);
+  }
+  bundle.checkin_photo_links = photoRows
+    .filter((r) => signed.has(r.storage_path))
+    .map((r) => ({
+      week_start: r.week_start,
+      pose: r.pose,
+      taken: r.taken_at ? String(r.taken_at).slice(0, 10) : r.week_start,
+      url: signed.get(r.storage_path),
+      expires_in_seconds: EXPORT_PHOTO_EXPIRY_S,
+    }));
 
   if (missing.length) bundle._about.tables_not_present = missing;
 

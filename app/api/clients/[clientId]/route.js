@@ -19,43 +19,13 @@ import { NextResponse } from 'next/server';
 import { unstable_noStore as noStore } from 'next/cache';
 import { supabaseAdmin as supabase } from '@/lib/supabase/admin';
 import { requireClientAccess } from '@/lib/auth/requireClientAccess';
+import { CLIENT_TABLES, INTERVENTION_TABLES, PHOTO_BUCKET, isMissing } from '@/lib/athleteData';
 
 export const dynamic = 'force-dynamic';
 
-// Child tables keyed by client_id. Order matters only for FK chains we know:
-// program_sessions hangs off programs, handled explicitly below; so do
-// set_logs (workout_logs) and form_clips (set_logs).
-//
-// ⚠️ COMPLETENESS (security review, data protection). This list used to stop
-// at 16 tables, leaving behind: activities (incl. heart rate), workout_logs
-// and set_logs (per-set weight/reps/RPE), form_clips AND the storage objects
-// they point at (video of the person training), coach_notes (the coach's
-// free-text notes about them), terra_connections, appointments, lift_history,
-// pact_checkins, calendar_days and calendar_connections — plus the Supabase
-// auth user, which was never deleted at all. Because the clients row went
-// first, nothing in the UI could find the orphans afterwards.
-//
-// Anything added here must also be added to the athlete data export
-// (/api/clients/[clientId]/export) — the two lists describe the same set:
-// everything we hold about one person.
-const CHILD_TABLES = [
-  'conversations', 'health_data', 'daily_pacts', 'custom_pacts', 'win_stack',
-  'weigh_ins', 'milestones', 'slip_events', 'mood_ratings', 'coach_meetings',
-  'weekly_pacts', 'weekend_pacts', 'stakes', 'cosigners', 'client_memory',
-  'programme',
-  // added 2026-07-24
-  'activities', 'coach_notes', 'terra_connections', 'appointments',
-  'lift_history', 'pact_checkins', 'calendar_days', 'notifications',
-  // V2 engine (2026-10-18). These cascade from clients anyway; listed so the
-  // receipt shows them and the list matches the engine's domain/athleteData.ts.
-  'athlete_events', 'athlete_state_daily', 'consents', 'push_tokens',
-  'brief_claims', 'scheduled_sends',
-  // Weekly check-ins and their progress photos (2026-10-22); the files go below.
-  'weekly_checkins', 'checkin_photos',
-];
-
-// 42P01 = Postgres; PGRST205 = newer PostgREST "could not find the table".
-const isMissing = (e) => e && (e.code === '42P01' || e.code === 'PGRST205');
+// The table list lives in lib/athleteData.js (mirrors the engine's athleteData.ts);
+// the export route reads the same list, so what is exported is what is erased.
+// scripts/check-erase-list.mjs fails when the console and the engine differ.
 
 export async function DELETE(req, context) {
   noStore();
@@ -129,7 +99,7 @@ export async function DELETE(req, context) {
   // Check-in progress photos: the images go with their rows.
   if (photoPaths.length) {
     await step('storage:checkin-photos', async () => {
-      const { error } = await supabase.storage.from('checkin-photos').remove(photoPaths);
+      const { error } = await supabase.storage.from(PHOTO_BUCKET).remove(photoPaths);
       if (error) throw new Error(error.message);
       return { removed: photoPaths.length };
     });
@@ -177,7 +147,7 @@ export async function DELETE(req, context) {
     if (error) { if (isMissing(error)) return {}; throw new Error(error.message); }
     const ids = (ivs || []).map((r) => r.id);
     if (ids.length) {
-      for (const t of ['intervention_outcomes', 'coach_labels']) {
+      for (const t of INTERVENTION_TABLES) {
         const { error: e } = await supabase.from(t).delete().in('intervention_id', ids);
         if (e && !isMissing(e)) throw new Error(`${t}: ${e.message}`);
       }
@@ -187,7 +157,7 @@ export async function DELETE(req, context) {
     return { interventions: ids.length };
   });
 
-  for (const table of CHILD_TABLES) {
+  for (const table of CLIENT_TABLES) {
     await step(table, async () => {
       const { error } = await supabase.from(table).delete().eq('client_id', clientId);
       // A table that doesn't exist on this deployment is not a failure.
