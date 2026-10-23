@@ -295,6 +295,19 @@ export default async function ClientDetailPage({ params, searchParams }) {
   const programmes  = progsR.data || [];
   const devices     = terraR.data || [];   // gracefully [] until the migration runs
 
+  // Apple Health, the pilot's data source in place of Terra (Oct 2026): when
+  // the phone last synced, and how many recent morning messages had last
+  // night's sleep in time (each morning message records what PAX could see).
+  const { data: morningRows } = await service.from('interventions')
+    .select('occurred_at, context_snapshot')
+    .eq('client_id', client.id)
+    .eq('type', 'morning')
+    .in('delivery_status', ['sent', 'delivered'])
+    .gte('occurred_at', sevenAgo.toISOString());
+  const mornings = morningRows || [];
+  const sleepInTime = mornings.filter((m) => m.context_snapshot?.recovery?.sleepH != null).length;
+  const healthSyncedAt = (healthR.data || []).map((h) => h.raw?.healthkit_synced_at).filter(Boolean).sort().at(-1) || null;
+
   // ------------------------------------------------------------
   // Journey — current weight is the END OF THE 7-DAY TREND over readings
   // that pass a plausibility guard, never the latest raw row. See
@@ -816,12 +829,21 @@ export default async function ClientDetailPage({ params, searchParams }) {
           {/* Data sources — plumbing status earns a chip strip, not a full card.
               It earns a sentence when it explains a hole in the data. */}
           <Card title="Data sources">
-            {devices.length === 0 ? (
-              <p className="text-muted text-xs">
-                No wearable connected yet — {firstName} can connect Garmin, Oura, Whoop &amp; more
-                from the app&apos;s Settings, and activity will land here automatically.
+            <div className="text-xs leading-relaxed mb-3">
+              <p className="text-blue">
+                <b className="font-semibold">Apple Health</b>{' '}
+                <span className="text-muted">
+                  {healthSyncedAt ? `last synced ${timeAgo(healthSyncedAt)}` : `not connected yet. ${firstName} can switch it on in the app's Settings.`}
+                </span>
               </p>
-            ) : (
+              {mornings.length > 0 && (
+                <p className="text-muted mt-1">
+                  Sleep in time for the morning message: <b className="text-blue font-semibold">{sleepInTime} of the last {mornings.length}</b>
+                  {sleepInTime < mornings.length ? '. PAX wrote the others without last night’s sleep.' : '.'}
+                </p>
+              )}
+            </div>
+            {devices.length === 0 ? null : (
               <>
                 <div className="flex gap-2 flex-wrap">
                   {devices.map((d, i) => {
