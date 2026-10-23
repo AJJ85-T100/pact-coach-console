@@ -8,7 +8,7 @@ import { useEffect, useState } from 'react';
 
 const MODES = [
   { id: 'auto', label: 'Send automatically', sub: 'PAX sends on schedule. You see everything it sent.' },
-  { id: 'review_nudges', label: 'Hold midday nudges for me', sub: 'Morning and evening go out; midday waits in Needs you today.' },
+  { id: 'review_nudges', label: 'Hold midday nudges for me', sub: 'Morning and evening go out; midday waits on My Day.' },
   { id: 'review_all', label: 'Hold everything for me', sub: 'Nothing goes out until you approve it. Best for your first week.' },
 ];
 

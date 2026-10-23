@@ -1259,7 +1259,7 @@ function SessionCard({ session, onChange }) {
           </p>
         ) : (
           <div className="mb-3 space-y-1">
-            <div className="grid grid-cols-12 gap-2 px-2 pb-2 border-b border-[#E2E6EB] font-['Inter'] text-[10px] font-bold uppercase tracking-[1.5px] text-[#8A95A3]">
+            <div className="hidden sm:grid grid-cols-12 gap-2 px-2 pb-2 border-b border-[#E2E6EB] font-['Inter'] text-[10px] font-bold uppercase tracking-[1.5px] text-[#8A95A3]">
               <div className="col-span-4">Exercise</div>
               <div className="col-span-1 text-center">Sets</div>
               <div className="col-span-2 text-center">Reps</div>
@@ -1623,16 +1623,25 @@ function ExerciseRow({ exercise, session, onChange, index = 0, count = 1, onMove
       : (exercise.reps_min || exercise.reps_max || '—'));
 
   return (
-    <div className="grid grid-cols-12 gap-2 px-2 py-2 items-center font-['Inter'] text-[13px] text-[#0A2540] rounded-[3px] hover:bg-[#F4F6F8] transition-colors group">
-      <div className="col-span-4 font-medium truncate" title={exercise.name}>{exercise.name}</div>
-      <div className="col-span-1 text-center tabular-nums">{exercise.sets ?? '—'}</div>
-      <div className="col-span-2 text-center tabular-nums">{reps}</div>
-      <div className="col-span-2 text-center text-[12px]">{exercise.weight || '—'}</div>
-      <div className="col-span-1 text-center tabular-nums text-[12px]">{exercise.rpe ?? '—'}</div>
-      <div className="col-span-1 text-center tabular-nums text-[12px]">
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 sm:grid sm:grid-cols-12 sm:gap-2 px-2 py-2 font-['Inter'] text-[14px] sm:text-[13px] text-[#0A2540] rounded-[3px] hover:bg-[#F4F6F8] transition-colors group">
+      <div className="min-w-0 flex-1 sm:flex-none sm:col-span-4 font-medium truncate" title={exercise.name}>{exercise.name}</div>
+      {/* Phone: one summary line under the name instead of six narrow columns */}
+      <div className="order-last basis-full sm:hidden text-[13px] text-[#5B6B7F] tabular-nums">
+        {[
+          exercise.sets != null ? `${exercise.sets} × ${reps}` : String(reps),
+          exercise.weight || null,
+          exercise.rpe != null ? `RPE ${exercise.rpe}` : null,
+          exercise.rest_seconds != null ? `${exercise.rest_seconds}s rest` : null,
+        ].filter(Boolean).join(' · ')}
+      </div>
+      <div className="hidden sm:block col-span-1 text-center tabular-nums">{exercise.sets ?? '—'}</div>
+      <div className="hidden sm:block col-span-2 text-center tabular-nums">{reps}</div>
+      <div className="hidden sm:block col-span-2 text-center text-[12px]">{exercise.weight || '—'}</div>
+      <div className="hidden sm:block col-span-1 text-center tabular-nums text-[12px]">{exercise.rpe ?? '—'}</div>
+      <div className="hidden sm:block col-span-1 text-center tabular-nums text-[12px]">
         {exercise.rest_seconds != null ? `${exercise.rest_seconds}s` : '—'}
       </div>
-      <div className="col-span-1 flex items-center justify-end gap-1">
+      <div className="sm:col-span-1 flex items-center justify-end gap-1">
         {confirming ? (
           <>
             <button
@@ -1655,7 +1664,7 @@ function ExerciseRow({ exercise, session, onChange, index = 0, count = 1, onMove
         ) : (
           <>
             {onMove && count > 1 && (
-              <span className="hidden group-hover:flex items-center">
+              <span className="flex sm:hidden sm:group-hover:flex items-center">
                 <button
                   onClick={() => onMove(index, index - 1)}
                   disabled={busy || index === 0}

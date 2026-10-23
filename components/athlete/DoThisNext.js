@@ -90,7 +90,7 @@ export default function DoThisNext({ clientId, firstName, conversationHref }) {
             <button className={`${s.btn} ${s.btnBlue}`} disabled={busy[e.id]} onClick={() => act(e.id, { kind: 'escalation', action: 'handled' })}>
               {busy[e.id] ? 'Saving…' : 'I’ve handled it'}
             </button>
-            {conversationHref && <Link href={conversationHref} className={`${s.btn} ${s.btnGhost}`} style={{ display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>Open conversation</Link>}
+            {conversationHref && <Link href={conversationHref} className={`${s.btn} ${s.btnGhost}`} style={{ display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>Message</Link>}
           </div>
         </div>
       ))}

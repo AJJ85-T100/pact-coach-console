@@ -42,8 +42,23 @@ function Stack({ segs, label }) {
 }
 
 export function RosterToday({ bands }) {
-  const { total, on_track, watch, drifting, none, hasState } = bands;
-  const scored = total - none;
+  const { total } = bands;
+  // Engine roster status (same as the Athletes page) when it answered;
+  // the older slip-risk bands only as a fallback.
+  const fromCards = bands.need != null;
+  const segs = fromCards
+    ? [
+        { key: 'need', name: 'Needs you', n: bands.need, color: RED, tip: `${bands.need} need you` },
+        { key: 'drift', name: 'Drifting', n: bands.drifting, color: AMBER, tip: `${bands.drifting} drifting` },
+        { key: 'on', name: 'On track', n: bands.on_track, color: BLUE, tip: `${bands.on_track} on track` },
+        { key: 'new', name: 'Not started', n: bands.not_started, color: SLATE, tip: `${bands.not_started} not started` },
+      ]
+    : [
+        { key: 'on', name: 'On track', n: bands.on_track, color: BLUE, tip: `${bands.on_track} on track` },
+        { key: 'watch', name: 'Watch', n: bands.watch, color: AMBER, tip: `${bands.watch} to watch` },
+        { key: 'drift', name: 'Drifting', n: bands.drifting, color: RED, tip: `${bands.drifting} drifting` },
+      ];
+  const label = segs.filter((x) => x.n > 0).map((x) => `${x.n} ${x.name.toLowerCase()}`).join(', ');
   return (
     <section className={s.card} aria-labelledby="t-roster">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
@@ -51,20 +66,10 @@ export function RosterToday({ bands }) {
         <Link href="/dashboard/athletes" style={{ fontSize: 13, fontWeight: 600 }}>Athletes →</Link>
       </div>
       <p className={s.big}>{total} <span className={s.unit}>athlete{total === 1 ? '' : 's'}</span></p>
-      {hasState ? (
-        <>
-          <Stack
-            label={`${on_track} on track, ${watch} to watch, ${drifting} drifting${none ? `, ${none} with no snapshot yet` : ''}`}
-            segs={[
-              { key: 'on', name: 'On track', n: on_track, color: BLUE, tip: `${on_track} on track · ${pct(on_track, scored)}%` },
-              { key: 'watch', name: 'Watch', n: watch, color: AMBER, tip: `${watch} to watch · ${pct(watch, scored)}%` },
-              { key: 'drift', name: 'Drifting', n: drifting, color: RED, tip: `${drifting} drifting · ${pct(drifting, scored)}%` },
-            ]}
-          />
-          {none > 0 && <p className={s.why} style={{ marginTop: 8 }}>{plural(none, 'athlete')} without a nightly snapshot yet (not on PACT V2, or new).</p>}
-        </>
+      {total > 0 && (fromCards || bands.hasState) ? (
+        <Stack label={label} segs={segs} />
       ) : (
-        <p className={s.why} style={{ marginTop: 10 }}>Bands appear once PAX has built its nightly snapshot for your athletes on PACT V2.</p>
+        <p className={s.why} style={{ marginTop: 10 }}>{total ? 'Statuses appear once PACT has a day of data for your athletes.' : 'Invite your first athlete to see them here.'}</p>
       )}
     </section>
   );

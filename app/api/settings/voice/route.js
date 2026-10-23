@@ -42,7 +42,7 @@ function voiceLines(v, coach) {
     band(v.tough_love, 'Lead with encouragement — warmth first, challenge second.', 'Tough love — direct, straight to the point, challenge without cushioning. Never guilt.'),
     band(v.technical, 'Plain language only — no training jargon.', 'Comfortable with training terminology (RPE, tempo, deload), used naturally.'),
     band(v.formality, 'Casual — contractions, colloquial, like texting a friend.', 'Polished — tidy sentences, professional register.'),
-    band(v.brevity, 'As brief as a message can be while still landing.', 'A touch more context and reasoning — still WhatsApp-length.'),
+    band(v.brevity, 'As brief as a message can be while still landing.', 'A touch more context and reasoning — still text-message length.'),
   ];
   for (const p of picks) if (p) lines.push(`- ${p}`);
   if (v.phrases) lines.push(`- Phrases ${coach} actually uses (weave in sparingly): ${v.phrases}`);

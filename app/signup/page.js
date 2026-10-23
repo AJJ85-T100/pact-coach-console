@@ -123,7 +123,7 @@ export default function CoachSignupPage() {
             <label className="block text-[10px] font-bold tracking-[0.15em] uppercase text-blue mb-2">Email</label>
             <input className={field} type="email" value={form.email} onChange={set('email')} placeholder="sam@example.com" autoComplete="email" />
 
-            <label className="block text-[10px] font-bold tracking-[0.15em] uppercase text-blue mb-2">Your WhatsApp (optional)</label>
+            <label className="block text-[10px] font-bold tracking-[0.15em] uppercase text-blue mb-2">Your mobile (optional)</label>
             <input className={field} type="tel" value={form.whatsapp_number} onChange={set('whatsapp_number')} placeholder="+44 7700 900123" />
 
             <label className="block text-[10px] font-bold tracking-[0.15em] uppercase text-blue mb-2">Signup code</label>

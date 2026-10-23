@@ -3,8 +3,9 @@ import { notFound } from 'next/navigation';
 import { createClient, createServiceClient } from '@/lib/supabase/server';
 import PactsPanel from '@/components/PactsPanel';
 import DangerZone from '@/components/DangerZone';
-import NudgeTool from '@/components/NudgeTool';
-import AthleteQuickActions from '@/components/AthleteQuickActions';
+import MessageComposer from '@/components/athlete/MessageComposer';
+import SessionsTab from '@/components/athlete/SessionsTab';
+import TargetsEditor from '@/components/athlete/TargetsEditor';
 import AthleteBilling from '@/components/AthleteBilling';
 import JourneyChart from '@/components/athlete/JourneyChart';
 import TodayMeters from '@/components/athlete/TodayMeters';
@@ -15,6 +16,7 @@ import DoThisNext from '@/components/athlete/DoThisNext';
 import MovesCard from '@/components/athlete/MovesCard';
 import TargetBars from '@/components/athlete/TargetBars';
 import TrendCard from '@/components/athlete/TrendCard';
+import { rosterCards, statusTag } from '@/lib/athlete/status';
 import CheckinCard from '@/components/athlete/CheckinCard';
 import PhotoCompare from '@/components/athlete/PhotoCompare';
 import FocusSummary from '@/components/athlete/FocusSummary';
@@ -22,19 +24,22 @@ import FocusPhase from '@/components/athlete/FocusPhase';
 import ov from '@/components/athlete/overview.module.css';
 import { deriveJourney, dayKey, addDays } from '@/lib/athlete/metrics';
 import {
-  programmeWeek, slipTag, consentTag, channelTag, weekTargets, paxTimeline,
-  weeklyAdherence, trendStats, APPROVAL_COPY,
+  programmeWeek, consentTag, channelTag, weekTargets, paxTimeline,
+  weeklyAdherence, trendStats,
 } from '@/lib/athlete/overview';
 import { engineFetch } from '@/lib/engine';
 
 export const dynamic = 'force-dynamic';
 
 const TABS = [
-  { id: 'overview',     label: 'Overview' },
-  { id: 'progress',     label: 'Progress' },
-  { id: 'conversation', label: 'Conversation' },
-  { id: 'settings',     label: 'Settings' },
+  { id: 'overview', label: 'Overview' },
+  { id: 'progress', label: 'Progress' },
+  { id: 'messages', label: 'Messages' },
+  { id: 'sessions', label: 'Sessions' },
+  { id: 'settings', label: 'Settings' },
 ];
+// Older links (My Day, the roster, bookmarks) said ?tab=conversation.
+const TAB_ALIAS = { conversation: 'messages' };
 
 // ============================================================
 // Helpers
@@ -61,7 +66,8 @@ function dateLabel(d) {
 // Page
 // ============================================================
 export default async function ClientDetailPage({ params, searchParams }) {
-  const tab = TABS.some(t => t.id === searchParams?.tab) ? searchParams.tab : 'overview';
+  const asked = TAB_ALIAS[searchParams?.tab] || searchParams?.tab;
+  const tab = TABS.some(t => t.id === asked) ? asked : 'overview';
   const supabase = createClient();
   const { data: { user } = {} } = await supabase.auth.getUser();
   if (!user) notFound();
@@ -106,11 +112,9 @@ export default async function ClientDetailPage({ params, searchParams }) {
   // Parallel data fetch — 14 queries, all scoped by client.id
   // ============================================================
   const [
-    msgsR, slipsR, pactsR, healthR, weighR, liftsR,
-    customPactsR, weeklyPactR, weekendPactR,
-    stakesR, cosignersR, winStackR, moodR,
+    msgsR, pactsR, healthR, weighR, liftsR, moodR,
     progsR, terraR, workoutsR,
-    planR, stateR, consentsR, ivR, recentUserR, rulesR, rosterR, checkinsR, focusR, photosR, movesR,
+    planR, stateR, consentsR, ivR, recentUserR, rosterR, checkinsR, focusR, photosR, movesR, cardsR,
   ] = await Promise.all([
     // Conversation history (last 30)
     service.from('conversations')
@@ -118,13 +122,6 @@ export default async function ClientDetailPage({ params, searchParams }) {
       .eq('client_id', client.id)
       .order('created_at', { ascending: false })
       .limit(30),
-
-    // Slips in last 14 days
-    service.from('slip_events')
-      .select('event_type, detected_at, date_for, context')
-      .eq('client_id', client.id)
-      .gte('detected_at', fourteenAgo.toISOString())
-      .order('detected_at', { ascending: false }),
 
     // Daily pacts last 56 days (8-week consistency grid)
     service.from('daily_pacts')
@@ -157,46 +154,6 @@ export default async function ClientDetailPage({ params, searchParams }) {
       .eq('client_id', client.id)
       .gte('recorded_date', eightWeeksAgoStr)
       .order('recorded_date', { ascending: false }),
-
-    // Active custom pacts
-    service.from('custom_pacts')
-      .select('name, rule, cadence, current_streak, longest_streak, status')
-      .eq('client_id', client.id)
-      .eq('status', 'active')
-      .order('current_streak', { ascending: false }),
-
-    // This week's weekly pact
-    service.from('weekly_pacts')
-      .select('pact_name, commitments, pact_score, status, week_start')
-      .eq('client_id', client.id)
-      .eq('week_start', mondayStr)
-      .maybeSingle(),
-
-    // Most recent weekend pact
-    service.from('weekend_pacts')
-      .select('saturday_plan, sunday_plan, monday_target_kg, monday_actual_kg, outcome, social_events, weekend_start')
-      .eq('client_id', client.id)
-      .order('weekend_start', { ascending: false })
-      .limit(1)
-      .maybeSingle(),
-
-    // Active stakes
-    service.from('stakes')
-      .select('amount, stake_type, charity_name, trigger_threshold, breaks_so_far, status')
-      .eq('client_id', client.id)
-      .eq('status', 'active'),
-
-    // Cosigners
-    service.from('cosigners')
-      .select('name, relationship, notify_on_break')
-      .eq('client_id', client.id),
-
-    // Win stack last 14 days
-    service.from('win_stack')
-      .select('date, pact_type, description, weight, created_at')
-      .eq('client_id', client.id)
-      .gte('date', fourteenAgoStr)
-      .order('date', { ascending: false }),
 
     // Mood — 90 days, so it can carry a sparkline instead of a lone number
     service.from('mood_ratings')
@@ -264,9 +221,7 @@ export default async function ClientDetailPage({ params, searchParams }) {
       .order('created_at', { ascending: true })
       .limit(200),
 
-    // Coach rules and roster status come from the engine, as the coach —
-    // the same source as Settings → CoachRules and V2Roster.
-    engineFetch('/v1/coach/rules'),
+    // Whether they're on the app (roster), from the engine as the coach.
     engineFetch('/v1/coach/roster'),
     // Weekly check-ins the athlete sent from the app.
     engineFetch(`/v1/checkins/${client.id}?limit=4`),
@@ -276,27 +231,21 @@ export default async function ClientDetailPage({ params, searchParams }) {
     engineFetch(`/v1/checkin/photos/${encodeURIComponent(client.id)}?limit=12`),
     // The Cortex record: moves and responses, the open proposal, what works.
     engineFetch(`/v1/coach/athletes/${encodeURIComponent(client.id)}/moves`),
+    // Status and why: the same card the roster shows.
+    rosterCards(),
   ]);
 
   // ============================================================
   // Derive
   // ============================================================
   const messages   = msgsR.data    || [];
-  const slips      = slipsR.data   || [];
   const pacts      = pactsR.data   || [];
   const healthAll  = healthR.data  || [];
   const weighAll   = weighR.data   || [];   // ascending
   const workouts   = workoutsR.data || [];
   const lifts      = liftsR.data   || [];
-  const customPacts = customPactsR.data || [];
-  const weeklyPact  = weeklyPactR.data  || null;
-  const weekendPact = weekendPactR.data || null;
-  const stakes      = stakesR.data  || [];
-  const cosigners   = cosignersR.data || [];
-  const wins        = winStackR.data || [];
   const moods       = moodR.data || [];
   const programmes  = progsR.data || [];
-  const devices     = terraR.data || [];   // gracefully [] until the migration runs
 
   // Apple Health, the pilot's data source in place of Terra (Oct 2026): when
   // the phone last synced, and how many recent morning messages had last
@@ -443,7 +392,6 @@ export default async function ClientDetailPage({ params, searchParams }) {
   // ============================================================
   const planRows    = planR.data || [];
   const stateRows   = stateR.data || [];
-  const latestState = stateRows[0] || null;
   const consents    = consentsR.error ? null : (consentsR.data || []);
   const ivs         = ivR.data || [];
   // null = engine unreachable (card hidden); [] = nothing sent yet.
@@ -451,7 +399,7 @@ export default async function ClientDetailPage({ params, searchParams }) {
   const focusPlan   = focusR.status === 200 && focusR.json && !focusR.json.error ? focusR.json : null;
   const photoWeeks  = photosR.status === 200 && Array.isArray(photosR.json?.weeks) ? photosR.json.weeks : null;
   const movesData   = movesR.status === 200 && movesR.json && !movesR.json.error ? movesR.json : null;
-  const rules       = rulesR.status === 200 && rulesR.json && !rulesR.json.error ? rulesR.json : null;
+  const card        = cardsR?.cards?.find(c => c.clientId === client.id) || null;
   const rosterRow   = rosterR.status === 200
     ? (rosterR.json?.athletes || []).find(a => a.clientId === client.id) || null
     : null;
@@ -510,7 +458,7 @@ export default async function ClientDetailPage({ params, searchParams }) {
     client.goal ? client.goal.replace(/_/g, ' ') : null,
   ].filter(Boolean).join(' · ');
   const statusTags = [
-    slipTag(latestState),
+    statusTag(card),
     consentTag(consents),
     channelTag(client, !!rosterRow?.app),
   ].filter(Boolean);
@@ -568,11 +516,11 @@ export default async function ClientDetailPage({ params, searchParams }) {
           ============================================================ */}
       {tab === 'overview' && (
         <div className="flex flex-col gap-5">
-          <DoThisNext clientId={client.id} firstName={firstName} conversationHref={tabHref('conversation')} />
+          <DoThisNext clientId={client.id} firstName={firstName} conversationHref={`${tabHref('messages')}&compose=1`} />
 
           <div className="grid gap-5 items-start" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(320px, 100%), 1fr))' }}>
             <div className="flex flex-col gap-5 min-w-0">
-              <TargetBars rows={week.rows} footnote={targetsFootnote} editHref={tabHref('progress')} />
+              <TargetBars rows={week.rows} footnote={targetsFootnote} editHref={tabHref('settings')} />
 
               {/* What PAX has done — last 7 days */}
               <section className={ov.card} aria-labelledby="ov-timeline">
@@ -602,8 +550,8 @@ export default async function ClientDetailPage({ params, searchParams }) {
                     </div>
                   ))
                 )}
-                <Link href={tabHref('conversation')} className={ov.link} style={{ display: 'inline-block', marginTop: 8 }}>
-                  Open full conversation →
+                <Link href={tabHref('messages')} className={ov.link} style={{ display: 'inline-block', marginTop: 8 }}>
+                  All messages →
                 </Link>
               </section>
             </div>
@@ -619,32 +567,6 @@ export default async function ClientDetailPage({ params, searchParams }) {
 
               <ProfileCard client={client} firstName={firstName} />
 
-              {/* PAX rules — the coach's rules, as the engine applies them */}
-              <section className={ov.card} aria-labelledby="ov-rules" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                <div className="flex justify-between items-baseline gap-2">
-                  <h2 id="ov-rules" className={ov.h} style={{ fontSize: 15 }}>PAX rules for {firstName}</h2>
-                  <Link href={tabHref('settings')} className={ov.link}>Change</Link>
-                </div>
-                {rosterRow && !rosterRow.onEngine && (
-                  <p className="m-0 text-[13px] text-[#B54708]">PAX V2 is switched off for {firstName}, so these don’t apply yet.</p>
-                )}
-                {rules ? (
-                  <dl className="m-0 grid gap-x-4 gap-y-2 text-[14px] text-blue" style={{ gridTemplateColumns: 'auto 1fr' }}>
-                    <dt className="text-[#5B6B7F]">Autonomy</dt>
-                    <dd className="m-0">{APPROVAL_COPY[rules.approvalMode] || APPROVAL_COPY.auto}</dd>
-                    <dt className="text-[#5B6B7F]">Quiet hours</dt>
-                    <dd className="m-0 tabular-nums">{rules.quietStart}–{rules.quietEnd}</dd>
-                    <dt className="text-[#5B6B7F]">Max touches</dt>
-                    <dd className="m-0">{rules.maxDailyTouches} a day</dd>
-                    <dt className="text-[#5B6B7F]">Never mention</dt>
-                    <dd className="m-0">{rules.neverTopics?.length ? rules.neverTopics.join(', ') : 'Nothing set'}</dd>
-                  </dl>
-                ) : (
-                  <p className="m-0 text-[14px] text-[#5B6B7F]">Couldn’t load your rules just now. They’re in Settings.</p>
-                )}
-                <p className="m-0 text-[12px] text-[#5B6B7F]">Your rules apply to every athlete on your roster.</p>
-              </section>
-
               <TrendCard stats={trend} weeks={weeks} />
             </div>
           </div>
@@ -656,42 +578,10 @@ export default async function ClientDetailPage({ params, searchParams }) {
           ============================================================ */}
       {tab === 'progress' && (
         <>
-      <div className="bg-white border border-border shadow-card rounded-lg px-5 py-4 mb-5 grid grid-cols-2 sm:grid-cols-4 gap-4">
+      <div className="bg-white border border-border shadow-card rounded-lg px-5 py-4 mb-5 grid grid-cols-2 sm:grid-cols-3 gap-4">
         <MetaDate label="Member since" date={client.created_at} />
         <MetaDate label="Target date"  date={client.target_date} />
         <MetaDate label="Event"        date={client.event_date} sublabel={client.event_name} />
-        <div>
-          <div className="text-[9px] font-semibold tracking-[0.18em] uppercase text-muted mb-1">Status</div>
-          <div className="text-sm text-blue capitalize">{client.status || 'active'}{client.gym ? ` · ${client.gym}` : ''}</div>
-        </div>
-      </div>
-      {/* Quick actions strip — sits right under the navy band */}
-      <div className="flex items-center gap-2 mb-5 flex-wrap">
-        <Link
-          href={`/dashboard/clients/${client.id}/programs`}
-          className="inline-flex items-center gap-2 bg-red text-white px-4 py-2 rounded text-[11px] font-bold tracking-[0.12em] uppercase hover:bg-red/90 transition-colors shadow-card"
-        >
-          <span className="text-base leading-none">+</span>
-          {programmes.length === 0 ? 'Build first programme' : 'New programme'}
-        </Link>
-        {programmes.length > 0 && (
-          <Link
-            href={`/dashboard/clients/${client.id}/programs`}
-            className="inline-flex items-center gap-2 bg-white border border-border text-blue px-4 py-2 rounded text-[11px] font-bold tracking-[0.12em] uppercase hover:border-blue transition-colors"
-          >
-            View all programmes · {programmes.length}
-          </Link>
-        )}
-        <AthleteQuickActions
-          clientId={client.id}
-          targets={{
-            calories: client.calorie_target,
-            protein:  client.protein_target,
-            carbs:    client.carb_target,
-            fat:      client.fat_target,
-            steps:    client.step_target,
-          }}
-        />
       </div>
 
       {/* ============================================================
@@ -849,193 +739,26 @@ export default async function ClientDetailPage({ params, searchParams }) {
                 </p>
               )}
             </div>
-            {devices.length === 0 ? null : (
-              <>
-                <div className="flex gap-2 flex-wrap">
-                  {devices.map((d, i) => {
-                    const label = d.provider
-                      ? d.provider.charAt(0) + d.provider.slice(1).toLowerCase()
-                      : 'Device';
-                    const lamp =
-                      d.status === 'revoked' ? 'bg-muted' :
-                      d.status === 'error'   ? 'bg-warn'  : 'bg-emerald-600';
-                    const landed = d.last_event_at
-                      ? `${timeAgo(d.last_event_at)}${d.last_event_type ? ` · ${d.last_event_type}` : ''}`
-                      : d.status === 'revoked'
-                        ? `disconnected ${d.revoked_at ? timeAgo(d.revoked_at) : ''}`.trim()
-                        : d.status === 'error' ? 'needs reconnecting' : 'no data yet';
-                    return (
-                      <span key={i}
-                        className="inline-flex items-center gap-2 border border-border rounded px-2.5 py-1.5 bg-bg text-[12px]">
-                        <i className={`w-[7px] h-[7px] rounded-full ${lamp}`} />
-                        <b className="text-blue font-semibold">{label}</b>
-                        <span className="text-muted text-[11px]">{landed}</span>
-                      </span>
-                    );
-                  })}
-                </div>
-                {Object.keys(sourceNotes).length > 0 && (
-                  <p className="text-[11.5px] text-muted mt-3 leading-snug">
-                    Some trends above are greyed rather than falling — {sourceNotes.sleep}, so those
-                    days have no readings rather than bad ones.
-                  </p>
-                )}
-              </>
-            )}
           </Card>
-
-          {/* Coach-authored pacts — live panel: add, pause, watch status */}
-          <PactsPanel clientId={client.id} />
 
         </div>
         <div className="space-y-5 min-w-0">
-          <Card title="Pact context">
-            <div className="space-y-4">
-
-              {/* This week's weekly pact */}
-              {weeklyPact && (
-                <div className="pt-3 border-t border-border">
-                  <SubLabel>This week · {weeklyPact.pact_name || 'unnamed'}</SubLabel>
-                  <div className="text-xs text-muted mt-1">
-                    Score: {weeklyPact.pact_score ?? 0} · Status: {weeklyPact.status || 'in progress'}
-                  </div>
-                  {Array.isArray(weeklyPact.commitments) && weeklyPact.commitments.length > 0 && (
-                    <ul className="mt-2 space-y-1">
-                      {weeklyPact.commitments.map((c, i) => (
-                        <li key={i} className="text-sm text-blue flex items-start gap-2">
-                          <span className="text-red mt-1">•</span>
-                          <span>{typeof c === 'string' ? c : (c.name || c.label || JSON.stringify(c))}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              )}
-
-              {/* Weekend pact */}
-              {weekendPact && (
-                <div className="pt-3 border-t border-border">
-                  <SubLabel>Weekend pact · {dateLabel(weekendPact.weekend_start)}</SubLabel>
-                  <div className="mt-2 space-y-1 text-sm">
-                    {weekendPact.saturday_plan && <div><span className="text-[10px] tracking-wider uppercase text-muted mr-2">Sat</span> {weekendPact.saturday_plan}</div>}
-                    {weekendPact.sunday_plan   && <div><span className="text-[10px] tracking-wider uppercase text-muted mr-2">Sun</span> {weekendPact.sunday_plan}</div>}
-                    {weekendPact.outcome && <div className="text-xs text-muted mt-1.5">Outcome: {weekendPact.outcome}</div>}
-                  </div>
-                </div>
-              )}
-
-              {/* Stakes */}
-              {stakes.length > 0 && (
-                <div className="pt-3 border-t border-border">
-                  <SubLabel>Stakes</SubLabel>
-                  <ul className="mt-2 space-y-1.5">
-                    {stakes.map((s, i) => (
-                      <li key={i} className="flex items-center justify-between text-sm">
-                        <span className="text-blue">
-                          £{s.amount} → {s.charity_name || s.stake_type || 'charity'}
-                        </span>
-                        <span className="text-xs text-muted">{s.breaks_so_far ?? 0}/{s.trigger_threshold ?? '—'}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {/* Cosigners */}
-              {cosigners.length > 0 && (
-                <div className="pt-3 border-t border-border">
-                  <SubLabel>Watching · {cosigners.length}</SubLabel>
-                  <div className="flex flex-wrap gap-1.5 mt-2">
-                    {cosigners.map((c, i) => (
-                      <span key={i} className="text-[11px] bg-bg-alt text-blue px-2 py-1 rounded">
-                        {c.name}{c.relationship ? ` · ${c.relationship}` : ''}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Nothing at all */}
-              {!weeklyPact && !weekendPact && stakes.length === 0 && cosigners.length === 0 && (
-                <p className="text-muted text-xs">No weekly pact, stakes or cosigners yet.</p>
-              )}
-            </div>
-          </Card>
-
-          <Card title={`Recent wins (last 14d · ${wins.length})`}>
-            {wins.length === 0 ? (
-              <p className="text-muted text-xs">No wins logged in this window.</p>
-            ) : (
-              <ul className="divide-y divide-border">
-                {wins.slice(0, 8).map((w, i) => (
-                  <li key={i} className="py-2.5 first:pt-0 last:pb-0 flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="text-sm text-blue">{w.description || `${w.pact_type || 'pact'} kept`}</div>
-                      <div className="text-[10px] text-muted tracking-wide uppercase mt-0.5">
-                        {dateLabel(w.date)}
-                        {w.pact_type && <> · {w.pact_type}</>}
-                      </div>
-                    </div>
-                    {w.weight ? (
-                      <div className="text-right flex-shrink-0">
-                        <div className="font-display font-bold text-emerald-600 text-sm">+{w.weight}</div>
-                        <div className="text-[9px] text-muted tracking-wider uppercase">Wt</div>
-                      </div>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Card>
-
-          <Card title="Pact streak · last 14 days">
-            {pacts.length === 0 ? (
-              <p className="text-muted text-xs">No pacts logged in this window.</p>
-            ) : (
-              <div className="flex flex-wrap gap-1.5">
-                {pacts.slice().reverse().map(p => (
-                  <div
-                    key={p.date}
-                    title={`${p.date}: ${p.wins_completed ?? 0}/${p.total_wins ?? 0} wins`}
-                    className={`w-5 h-5 rounded-sm ${
-                      p.status === 'won'     ? 'bg-emerald-500'
-                      : p.status === 'partial' ? 'bg-warn'
-                      : p.status === 'lost'    ? 'bg-red'
-                                               : 'bg-border'
-                    }`}
-                  />
-                ))}
-              </div>
-            )}
-          </Card>
-
-          <Card title={`Slips · last 14 days (${slips.length})`}>
-            {slips.length === 0 ? (
-              <p className="text-muted text-xs">No slip events.</p>
-            ) : (
-              <ul className="divide-y divide-border">
-                {slips.map((s, i) => (
-                  <li key={i} className="py-2.5 first:pt-0 last:pb-0 flex justify-between items-center text-sm">
-                    <span className="text-blue font-medium capitalize">{s.event_type?.replace(/_/g, ' ')}</span>
-                    <span className="text-muted text-xs">{timeAgo(s.detected_at)}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Card>
+          {/* Pacts: theirs from the app and any you add */}
+          <PactsPanel clientId={client.id} />
         </div>
       </div>
         </>
       )}
 
       {/* ============================================================
-          CONVERSATION
+          MESSAGES — write to them, then the thread, newest first
           ============================================================ */}
-      {tab === 'conversation' && (
-        <div className="max-w-3xl">
+      {tab === 'messages' && (
+        <div className="max-w-3xl flex flex-col gap-5">
+            <MessageComposer clientId={client.id} firstName={firstName} autoFocus={searchParams?.tab === 'conversation' || searchParams?.compose === '1'} />
             <div className="bg-white rounded-lg shadow-card border border-border flex flex-col" style={{ maxHeight: 'calc(100vh - 3rem)' }}>
               <h3 className="font-display font-bold text-blue text-[11px] uppercase tracking-[0.15em] px-5 py-4 border-b border-border flex-shrink-0">
-                PAX conversation · {messages.length} message{messages.length === 1 ? '' : 's'} <span className="normal-case font-normal text-muted tracking-normal">· newest first</span>
+                {firstName} and PAX · {messages.length} message{messages.length === 1 ? '' : 's'} <span className="normal-case font-normal text-muted tracking-normal">· newest first</span>
               </h3>
               {messages.length === 0 ? (
                 <div className="p-5 text-muted text-xs">No messages yet.</div>
@@ -1057,7 +780,7 @@ export default async function ClientDetailPage({ params, searchParams }) {
                           <div className={`text-[10px] font-semibold tracking-wider uppercase mb-1 ${
                             isUser ? 'text-white/70' : 'text-muted'
                           }`}>
-                            {isUser ? firstName : 'PAX'} · {timeAgo(m.created_at)}
+                            {isUser ? firstName : m.sender === 'coach' ? 'You' : 'PAX'} · {timeAgo(m.created_at)}
                           </div>
                           <div className="whitespace-pre-wrap">{m.content}</div>
                         </div>
@@ -1071,13 +794,34 @@ export default async function ClientDetailPage({ params, searchParams }) {
       )}
 
       {/* ============================================================
-          SETTINGS — manual nudge and archive / erase
+          SESSIONS — next appointment and notes after each session
+          ============================================================ */}
+      {tab === 'sessions' && (
+        <SessionsTab clientId={client.id} firstName={firstName} trainingDays={trainingDays} />
+      )}
+
+      {/* ============================================================
+          SETTINGS — focus and phase, targets, fees, archive / erase
           ============================================================ */}
       {tab === 'settings' && (
         <div className="max-w-3xl space-y-5">
           <FocusPhase clientId={client.id} firstName={firstName} />
-          <NudgeTool clientId={client.id} clientFirstName={(client.name || '').split(' ')[0]} />
+          <TargetsEditor
+            clientId={client.id}
+            firstName={firstName}
+            targets={{
+              calories: client.calorie_target,
+              protein:  client.protein_target,
+              carbs:    client.carb_target,
+              fat:      client.fat_target,
+              steps:    client.step_target,
+            }}
+          />
           <AthleteBilling clientId={client.id} firstName={firstName} />
+          <p className="text-[13px] text-[#5B6B7F]">
+            Quiet hours, the daily message limit and topics PAX never raises are set once for all your athletes in{' '}
+            <Link href="/dashboard/settings#rules" className="font-semibold text-blue underline">Settings</Link>.
+          </p>
           <DangerZone clientId={client.id} clientName={client.name || ''} />
         </div>
       )}

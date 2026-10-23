@@ -91,11 +91,11 @@ function Squares({ week, size = 14 }) {
 }
 
 function primaryAction(a) {
-  if (a.status === 'need') return { text: `Message ${a.name.split(' ')[0]}`, href: `/dashboard/clients/${a.clientId}?tab=conversation`, kind: 'red' };
-  if (a.flags.some((f) => f.kind === 'consent')) return { text: 'Send consent link', href: '/dashboard', kind: 'blue' };
-  if (a.status === 'new') return { text: 'Nudge them', href: `/dashboard/clients/${a.clientId}?tab=conversation`, kind: 'blue' };
+  if (a.status === 'need') return { text: `Message ${a.name.split(' ')[0]}`, href: `/dashboard/clients/${a.clientId}?tab=messages&compose=1`, kind: 'red' };
+  if (a.flags.some((f) => f.kind === 'consent')) return { text: 'Send consent link', href: `/dashboard/clients/${a.clientId}`, kind: 'blue' };
+  if (a.status === 'new') return { text: 'Nudge them', href: `/dashboard/clients/${a.clientId}?tab=messages&compose=1`, kind: 'blue' };
   if (a.flags.some((f) => f.kind === 'focus_end')) return { text: 'Pick next focus', href: `/dashboard/clients/${a.clientId}?tab=settings`, kind: 'blue' };
-  return { text: `Message ${a.name.split(' ')[0]}`, href: `/dashboard/clients/${a.clientId}?tab=conversation`, kind: 'outline' };
+  return { text: `Message ${a.name.split(' ')[0]}`, href: `/dashboard/clients/${a.clientId}?tab=messages&compose=1`, kind: 'outline' };
 }
 
 function Card({ a, today }) {
@@ -147,7 +147,7 @@ function Card({ a, today }) {
 
       <div style={{ padding: '12px 14px 0', display: 'flex', flexWrap: 'wrap', gap: '2px 12px', font: '500 12px Inter, sans-serif', color: '#5B6B7F', marginTop: 'auto' }}>
         <span>{lastActiveLabel(a.lastActive, today)}</span>
-        {a.status !== 'new' && <span>{a.checkin === 'sent' ? 'Check-in sent' : 'Check-in due Sun'}</span>}
+        {a.status !== 'new' && <span>{a.checkin === 'sent' ? 'Check-in sent' : 'Check-in due'}</span>}
         {a.weeksRunning >= 2 && <span style={{ color: '#0A2540', fontWeight: 600 }}>{a.weeksRunning} weeks running</span>}
       </div>
 
@@ -193,7 +193,7 @@ function ListView({ cards, today }) {
                 </td>
                 <td style={{ padding: 12, font: '600 13px Inter, sans-serif', color: a.weight?.good ? '#0B5E43' : '#0A2540', whiteSpace: 'nowrap' }}>{a.weight?.trend || a.weight?.sinceStart || '—'}</td>
                 <td style={{ padding: 12, font: '500 13px Inter, sans-serif', color: '#5B6B7F', whiteSpace: 'nowrap' }}>{lastActiveLabel(a.lastActive, today)}</td>
-                <td style={{ padding: 12, font: '500 13px Inter, sans-serif', color: '#5B6B7F', whiteSpace: 'nowrap' }}>{a.status === 'new' ? '—' : a.checkin === 'sent' ? 'Sent' : 'Due Sun'}</td>
+                <td style={{ padding: 12, font: '500 13px Inter, sans-serif', color: '#5B6B7F', whiteSpace: 'nowrap' }}>{a.status === 'new' ? '—' : a.checkin === 'sent' ? 'Sent' : 'Due'}</td>
                 <td style={{ padding: 12, whiteSpace: 'nowrap', textAlign: 'right' }}>
                   <Link href={act.href} style={{ ...btn(act.kind), minHeight: 36, fontSize: 13, flex: 'none' }}>{act.text}</Link>
                 </td>

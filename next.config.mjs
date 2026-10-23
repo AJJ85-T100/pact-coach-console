@@ -34,7 +34,8 @@ const securityHeaders = [
   // Also reduces the client-UUID leakage that made several IDOR findings
   // easy to exploit — UUIDs stop riding outbound Referer headers.
   { key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains; preload' },
-  { key: 'Permissions-Policy', value: 'camera=(self), microphone=(), geolocation=(), interest-cohort=()' },
+  // Microphone for hold-to-dictate session notes (athlete page → Sessions).
+  { key: 'Permissions-Policy', value: 'camera=(self), microphone=(self), geolocation=(), interest-cohort=()' },
   { key: 'X-DNS-Prefetch-Control', value: 'off' },
 ];
 
@@ -42,6 +43,18 @@ const nextConfig = {
   poweredByHeader: false,
   async headers() {
     return [{ source: '/:path*', headers: securityHeaders }];
+  },
+  // Pages folded into My Day, the roster and the athlete page (Oct 2026
+  // tidy-up). Old bookmarks land somewhere sensible.
+  async redirects() {
+    return [
+      { source: '/dashboard/at-risk', destination: '/dashboard/athletes', permanent: false },
+      { source: '/dashboard/activity', destination: '/dashboard/athletes', permanent: false },
+      { source: '/dashboard/notes', destination: '/dashboard/athletes', permanent: false },
+      { source: '/dashboard/briefs', destination: '/dashboard/athletes', permanent: false },
+      { source: '/dashboard/nutrition', destination: '/dashboard/athletes', permanent: false },
+      { source: '/dashboard/reports', destination: '/dashboard', permanent: false },
+    ];
   },
 };
 

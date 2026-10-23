@@ -31,7 +31,7 @@ export default function GoingQuiet({ item, busy, onHandled, conversationHref }) 
         <button className={`${s.btn} ${s.btnBlue}`} disabled={busy} onClick={onHandled}>
           {busy ? 'Saving…' : 'I’ve got this'}
         </button>
-        {conversationHref && <Link href={conversationHref} className={`${s.btn} ${s.btnGhost}`} style={{ display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>Open conversation</Link>}
+        {conversationHref && <Link href={conversationHref} className={`${s.btn} ${s.btnGhost}`} style={{ display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>Message</Link>}
       </div>
     </div>
   );

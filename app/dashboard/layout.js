@@ -4,6 +4,7 @@ import { createClient, createServiceClient } from '@/lib/supabase/server';
 import SignOutButton from '@/components/SignOutButton';
 import SidebarNavItem from '@/components/SidebarNavItem';
 import SidebarShell from '@/components/SidebarShell';
+import { rosterCards, statusCounts } from '@/lib/athlete/status';
 
 export default async function DashboardLayout({ children }) {
   // Belt-and-braces: middleware bounces unauthenticated, but server components
@@ -20,14 +21,24 @@ export default async function DashboardLayout({ children }) {
     .eq('auth_user_id', user.id)
     .maybeSingle();
 
-  // Counts for sidebar badges
-  const { data: clients = [] } = await service
-    .from('clients')
-    .select('id, status')
-    .eq('pt_id', pt?.id || null);
-
-  const totalClients = clients?.length || 0;
-  const atRiskCount  = (clients || []).filter(c => c.status === 'at_risk').length;
+  // Sidebar badges. "Needs you" is the engine's roster status, the same
+  // number the Athletes page shows (lib/athlete/status.js). Form review only
+  // appears while clips are waiting for a reply.
+  const [roster, pendingClips] = await Promise.all([
+    pt?.id ? rosterCards() : null,
+    pt?.id
+      ? service.from('clients').select('id').eq('pt_id', pt.id).then(async ({ data: ids }) => {
+          const list = (ids || []).map((c) => c.id);
+          if (!list.length) return 0;
+          const { count } = await service.from('form_clips').select('id', { count: 'exact', head: true })
+            .in('client_id', list).neq('review_status', 'reviewed');
+          return count || 0;
+        })
+      : 0,
+  ]);
+  const counts = statusCounts(roster?.cards);
+  const totalClients = roster?.cards?.length ?? null;
+  const needsYou = counts.need + counts.drift;
 
   const sidebar = (
       <aside className="w-64 bg-blue text-white flex flex-col h-full">
@@ -49,41 +60,19 @@ export default async function DashboardLayout({ children }) {
           </Link>
         </div>
 
-        {/* Nav */}
+        {/* Nav: five places. Everything else lives on the athlete page. */}
         <nav className="flex-1 px-3 py-6 overflow-y-auto">
-
-          {/* Workspace section */}
-          <div className="mb-7">
-            <div className="px-3 mb-2 text-[10px] font-bold tracking-[0.22em] uppercase text-white/40">
-              Workspace
-            </div>
-            <SidebarNavItem href="/dashboard" label="Dashboard" exact />
-            <SidebarNavItem href="/dashboard/athletes" label="Athletes" count={totalClients} />
-            <SidebarNavItem href="/dashboard/invite" label="Invite athlete" />
-            <SidebarNavItem href="/dashboard/programs" label="Programmes" />
-            <SidebarNavItem href="/dashboard/nutrition" label="Nutrition targets" />
-            <SidebarNavItem href="/dashboard/templates" label="Templates" />
-          </div>
-
-          {/* This Week section */}
-          <div>
-            <div className="px-3 mb-2 text-[10px] font-bold tracking-[0.22em] uppercase text-white/40">
-              This Week
-            </div>
-            <SidebarNavItem href="/dashboard/activity" label="Activity feed" />
-            <SidebarNavItem href="/dashboard/form-review" label="Form review" />
-            <SidebarNavItem href="/dashboard/notes" label="Athlete notes" />
-            <SidebarNavItem href="/dashboard/briefs" label="Pre-session briefs" />
-            <SidebarNavItem href="/dashboard/at-risk" label="At-risk athletes" count={atRiskCount} badge={atRiskCount > 0} />
-            <SidebarNavItem href="/dashboard/reports" label="PAX reports" />
-          </div>
-
-          {/* Settings */}
-          <div className="mt-7">
-            <div className="px-3 mb-2 text-[10px] font-bold tracking-[0.22em] uppercase text-white/40">
-              You
-            </div>
-            <SidebarNavItem href="/dashboard/settings" label="Voice & settings" />
+          <SidebarNavItem href="/dashboard" label="My Day" exact count={needsYou || undefined} badge={counts.need > 0} />
+          <SidebarNavItem href="/dashboard/athletes" label="Athletes" also={['/dashboard/clients', '/dashboard/invite']} count={totalClients ?? undefined} />
+          <SidebarNavItem href="/dashboard/programs" label="Programmes" also={['/dashboard/templates', '/dashboard/exercises']} />
+          {pendingClips > 0 && (
+            <SidebarNavItem href="/dashboard/form-review" label="Form review" count={pendingClips} badge />
+          )}
+          <SidebarNavItem href="/dashboard/settings" label="Settings" />
+          <div className="mt-6 px-3">
+            <Link href="/dashboard/invite" className="flex items-center justify-center min-h-[44px] bg-red text-white text-sm font-semibold rounded hover:bg-red-deep">
+              + Invite athlete
+            </Link>
           </div>
         </nav>
 

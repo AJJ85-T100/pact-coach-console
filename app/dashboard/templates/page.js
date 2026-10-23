@@ -56,7 +56,7 @@ export default function TemplatesPage() {
   }
 
   return (
-    <div className="p-8 max-w-4xl">
+    <div className="px-4 sm:px-8 py-6 sm:py-8 max-w-4xl">
       <p className="text-xs font-semibold text-red tracking-[0.2em] uppercase mb-1">Build once, reuse</p>
       <h1 className="font-display font-extrabold text-blue text-3xl uppercase tracking-tight mb-1">Templates</h1>
       <p className="text-body text-sm mb-8">

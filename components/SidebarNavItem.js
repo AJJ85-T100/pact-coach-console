@@ -14,11 +14,11 @@ import { usePathname } from 'next/navigation';
  *   - exact:    if true, only highlight on exact path match (default for /dashboard
  *               so it doesn't stay highlighted under /dashboard/athletes etc.)
  */
-export default function SidebarNavItem({ href, label, count, badge, disabled, exact }) {
+export default function SidebarNavItem({ href, label, count, badge, disabled, exact, also = [] }) {
   const pathname = usePathname();
 
   const active = !disabled && href && (
-    exact ? pathname === href : (pathname === href || pathname.startsWith(href + '/'))
+    exact ? pathname === href : [href, ...also].some((h) => pathname === h || pathname.startsWith(h + '/'))
   );
 
   const className = `flex items-center justify-between px-3 py-2 rounded text-sm font-medium transition-colors mb-0.5 ${

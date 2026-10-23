@@ -2,6 +2,10 @@
 
 import { useState, useEffect, useRef } from 'react';
 
+// Where athletes install the app (the TestFlight public link for the pilot).
+// Unset: the done screen says the coach will send it.
+const APP_URL = process.env.NEXT_PUBLIC_APP_INSTALL_URL || null;
+
 const GOALS = [
   { slug: 'fat_loss', letter: 'L', label: 'Lose fat', sub: 'Lean down, hold strength' },
   { slug: 'muscle_gain', letter: 'M', label: 'Build muscle', sub: 'Add size and strength' },
@@ -143,20 +147,23 @@ export default function OnboardWizard({ token, coachName, clientName, clientPhon
           <p className="text-body text-sm leading-relaxed mb-2">
             Nice one{form.name ? `, ${form.name.split(' ')[0]}` : ''}. Your profile's with {coachName} now.
           </p>
-          {done.telegram_url ? (
-            <>
-              <p className="text-muted text-sm leading-relaxed mb-5">
-                Last step: connect Telegram so PAX, your accountability companion, can check in between sessions. PAX will then ask your OK on how your data is used.
-              </p>
-              <a href={done.telegram_url}
-                className="inline-block bg-red text-white font-semibold tracking-wider uppercase text-xs px-7 py-3.5 rounded hover:bg-red-deep transition-colors">
-                Connect Telegram
-              </a>
-              <p className="text-muted text-xs leading-relaxed mt-3">Opens Telegram. Tap Start. The link works once and lasts 14 days.</p>
-            </>
-          ) : (
-            <p className="text-muted text-sm leading-relaxed">
-              PAX, your accountability companion, will say hello once {coachName} connects you. Nothing else to do for now.
+          <div className="text-left bg-bg border-l-[3px] border-blue rounded-r p-4 mt-5 mb-5">
+            <p className="text-blue text-sm font-semibold mb-1">Last step: get the PACT app</p>
+            <p className="text-body text-sm leading-relaxed m-0">
+              {APP_URL ? 'Install it from the link below, then sign' : `${coachName} will send you the download link. Then sign`}{' '}
+              in with <b className="text-blue">{form.email || 'the email you gave'}</b>. You’ll get a 6-digit code by email, no password.
+              The app asks your OK on how your data is used, then PAX starts checking in between sessions.
+            </p>
+          </div>
+          {APP_URL && (
+            <a href={APP_URL}
+              className="inline-block bg-red text-white font-semibold tracking-wider uppercase text-xs px-7 py-3.5 rounded hover:bg-red-deep transition-colors">
+              Get the PACT app
+            </a>
+          )}
+          {done.telegram_url && (
+            <p className="text-muted text-xs leading-relaxed mt-5">
+              Prefer Telegram, or no iPhone? <a href={done.telegram_url} className="font-semibold text-blue underline">Connect Telegram instead</a>. The link works once and lasts 14 days.
             </p>
           )}
         </div>
@@ -399,14 +406,14 @@ export default function OnboardWizard({ token, coachName, clientName, clientPhon
       )}
 
       {step === 7 && (
-        <Step title="Stay connected" sub="PAX checks in on Telegram. You'll connect it on the next screen.">
+        <Step title="Stay connected" sub="PAX checks in through the PACT app. You'll get it on the next screen.">
           <Field label="Your mobile number" hint="So your coach can reach you. Include the country code, e.g. +44 7700 900123.">
             <input type="tel" value={form.whatsapp_phone} onChange={(e) => set('whatsapp_phone', e.target.value)} placeholder="+44 7700 900123" maxLength={20}
               className="w-full bg-bg border border-border rounded px-3.5 py-3 text-sm text-blue placeholder:text-muted focus:outline-none focus:border-blue" />
           </Field>
           <div className="bg-bg border-l-[3px] border-blue rounded-r p-4 mt-2">
             <p className="text-body text-xs leading-relaxed">
-              Once you've connected Telegram and said OK to how your data is used, PAX will start keeping you on track between sessions. No spam, no guilt.
+              Once you've signed in to the app and said OK to how your data is used, PAX will start keeping you on track between sessions. No spam, no guilt.
             </p>
           </div>
           {error && <div className="bg-red/10 border border-red/30 text-red px-4 py-3 rounded text-sm mt-4">{error}</div>}

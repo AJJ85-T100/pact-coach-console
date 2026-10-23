@@ -2,14 +2,15 @@ import OutcomesPanel from '@/components/OutcomesPanel';
 import RetentionPanel from '@/components/RetentionPanel';
 import { TodayProvider } from '@/components/today/TodayContext';
 import {
-  TodayHeader, Escalations, Moves, Drafts, Drifting, ConsentNeeded, QueueClear, AutonomyCard, AutoLog,
+  TodayHeader, Escalations, GoingQuiet, Moves, Drafts, Drifting, ConsentNeeded, QueueClear, AutonomyCard, AutoLog,
 } from '@/components/today/TodayQueue';
 import { RevenueStrip, RosterToday, PaxToday, AthletesReplying, OnboardingFunnel } from '@/components/today/TodayCards';
 import s from '@/components/today/today.module.css';
 import { createClient, createServiceClient } from '@/lib/supabase/server';
 import { engineFetch } from '@/lib/engine';
+import { rosterCards } from '@/lib/athlete/status';
 import {
-  londonKey, addDaysKey, isActive, latestStateByClient, rosterBands, revenue,
+  londonKey, addDaysKey, isActive, latestStateByClient, rosterBands, cardBands, revenue,
   paxToday, groupAutoLog, replyDays, onboardingFunnel,
 } from '@/lib/today/derive';
 
@@ -117,10 +118,13 @@ export default async function TodayPage() {
     openInvites = safe(invR);
     roster = rosterR.status === 200 && Array.isArray(rosterR.json?.athletes) ? rosterR.json.athletes : null;
   }
+  const cards = pt?.id ? (await rosterCards())?.cards ?? null : null;
 
   // ---------------- Derive
   const stateBy = latestStateByClient(stateRows);
-  const bands = rosterBands(active, stateBy);
+  // The engine's roster status when it answers (same as the Athletes page);
+  // the nightly slip-risk bands only if it can't be reached.
+  const bands = cards ? cardBands(cards) : rosterBands(active, stateBy);
   const rev = revenue({ clients, active, drifting: bands.drifting_list, pt, todayKey });
   const pax = paxToday({ ivs: ivRows, labels: labelRows, todayKey });
   const autoGroups = groupAutoLog(pax.auto, nameBy);
@@ -155,12 +159,11 @@ export default async function TodayPage() {
       <div className={s.page}>
         <TodayHeader dateLabel={dateLabel} sentOwn={pax.sentOwn} />
 
-        <RevenueStrip rev={rev} />
-
         <div className={s.grid}>
           <div className={s.main}>
             <QueueClear />
             <Escalations />
+            <GoingQuiet />
             <Moves />
             <Drafts />
             <div className={s.pair}>
@@ -170,6 +173,7 @@ export default async function TodayPage() {
             <AutonomyCard />
             <OnboardingFunnel funnel={funnel} />
             <AutoLog groups={autoGroups} total={pax.sentOwn} />
+            <RevenueStrip rev={rev} />
           </div>
 
           <div className={s.side}>

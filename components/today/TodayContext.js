@@ -85,18 +85,23 @@ export function TodayProvider({ drifting = [], hasState = false, children }) {
     const suggestions = angles.filter((a) => a.suggest && !a.locked && !a.auto && !dismissed.includes(a.angle));
     const routine = new Set(angles.filter(approvedOften).map((a) => a.angle));
     const d = needs.data;
-    // Drifting = latest slip-risk band (the athlete page's definition), with
-    // the engine's reason added where it has one. Only when no athlete has a
-    // nightly snapshot yet do we fall back to the engine's own drifting list.
+    // Going quiet with no proposed move: shown on its own so it never
+    // disappears (a move, when there is one, carries the same flag).
+    const moveIds = new Set((d?.moves || []).map((m) => m.clientId));
+    const quietOnly = (d?.quiet || []).filter((q) => !moveIds.has(q.clientId));
+    // Drifting = the engine's roster status (lib/athlete/status.js), passed
+    // in from the page. Needs-you athletes are already in Escalations, and
+    // anyone going quiet is in the cards above, so they aren't listed twice.
     const engineRisk = d?.atRisk || [];
-    const reasonBy = Object.fromEntries(engineRisk.map((a) => [a.clientId, (a.reasons || []).join(' · ')]));
-    const driftList = hasState
-      ? drifting.map((x) => ({ ...x, reason: reasonBy[x.clientId] || x.reason }))
-      : engineRisk.map((a) => ({ clientId: a.clientId, athlete: a.athlete, score: null, reason: (a.reasons || []).join(' · ') }));
+    const shown = new Set([...moveIds, ...quietOnly.map((q) => q.clientId)]);
+    const driftList = (hasState
+      ? drifting.filter((x) => x.status !== 'need')
+      : engineRisk.map((a) => ({ clientId: a.clientId, athlete: a.athlete, score: null, reason: (a.reasons || []).join(' · ') }))
+    ).filter((x) => !shown.has(x.clientId));
     const count = d
-      ? (d.escalations?.length || 0) + (d.moves?.length || 0) + (d.drafts?.length || 0) + (d.needConsent?.length || 0) + driftList.length + suggestions.length
+      ? (d.escalations?.length || 0) + (d.moves?.length || 0) + quietOnly.length + (d.drafts?.length || 0) + (d.needConsent?.length || 0) + driftList.length + suggestions.length
       : null;
-    return { ...needs, autonomy: { ...auto, suggestions, routine, labelOf, dismiss, setAngleAuto, busy: autoBusy, msg: autoMsg }, driftList, count };
+    return { ...needs, autonomy: { ...auto, suggestions, routine, labelOf, dismiss, setAngleAuto, busy: autoBusy, msg: autoMsg }, driftList, quietOnly, count };
   }, [needs, auto, dismissed, drifting, hasState, dismiss, setAngleAuto, autoBusy, autoMsg]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

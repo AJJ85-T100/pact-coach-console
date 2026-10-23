@@ -52,20 +52,20 @@ export default function InvitePage() {
     }
   }
 
-  function whatsappShareUrl() {
-    const greeting = invite.client_name ? `Hi ${invite.client_name},` : 'Hi,';
-    const msg = `${greeting}
+  function inviteMessage() {
+    const greeting = invite.client_name ? `Hi ${invite.client_name.split(' ')[0]},` : 'Hi,';
+    return `${greeting}
 
-You're invited to join my coaching on PACT.Health — the platform I use to keep us connected between our sessions.
-
-Tap here to set up your profile (takes 5 minutes):
+I'm using PACT to keep us connected between sessions. Set up your profile here (about 5 minutes):
 ${invite.invite_url}
 
-PAX (the AI accountability companion) will introduce themselves once you're done.`;
-
-    const phone = (invite.client_phone || '').replace(/[^\d]/g, '');
-    return `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`;
+At the end it shows you how to get the PACT app. Sign in with the same email and PAX, your check-in companion, takes it from there.`;
   }
+
+  const phoneDigits = () => (invite?.client_phone || '').replace(/[^\d+]/g, '');
+  const smsUrl = () => `sms:${phoneDigits()}${/iPhone|iPad|Mac/.test(typeof navigator !== 'undefined' ? navigator.userAgent : '') ? '&' : '?'}body=${encodeURIComponent(inviteMessage())}`;
+  const mailUrl = () => `mailto:?subject=${encodeURIComponent('Your PACT invite')}&body=${encodeURIComponent(inviteMessage())}`;
+  const waUrl = () => `https://wa.me/${phoneDigits().replace('+', '')}?text=${encodeURIComponent(inviteMessage())}`;
 
   function expiresLabel() {
     if (!invite?.expires_at) return '';
@@ -74,7 +74,7 @@ PAX (the AI accountability companion) will introduce themselves once you're done
   }
 
   return (
-    <div className="px-8 lg:px-10 py-8 lg:py-10 max-w-3xl">
+    <div className="px-4 sm:px-8 lg:px-10 py-6 lg:py-10 max-w-3xl">
 
       {/* Page header */}
       <header className="mb-8">
@@ -85,7 +85,7 @@ PAX (the AI accountability companion) will introduce themselves once you're done
           Invite an athlete
         </h1>
         <p className="text-body text-sm">
-          Generates a one-time onboarding link. Send it to your athlete via WhatsApp or email — they fill out a 5-minute wizard and PAX takes it from there.
+          Makes a one-time link. Your athlete fills in a 5-minute profile, then gets the PACT app and signs in with the same email.
         </p>
       </header>
 
@@ -95,7 +95,7 @@ PAX (the AI accountability companion) will introduce themselves once you're done
         // ============================================================
         <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow-card border border-border p-6 space-y-5">
 
-          <Field label="Athlete name" optional hint="Pre-fills their greeting in the WhatsApp message">
+          <Field label="Athlete name" optional hint="Used to greet them in the invite message">
             <input
               type="text"
               value={form.client_name}
@@ -106,7 +106,7 @@ PAX (the AI accountability companion) will introduce themselves once you're done
             />
           </Field>
 
-          <Field label="WhatsApp number" optional hint="Include country code (e.g. +44 7700 900123). Enables direct WhatsApp share.">
+          <Field label="Mobile number" optional hint="Include the country code, e.g. +44 7700 900123, to send the invite by text or WhatsApp.">
             <input
               type="tel"
               value={form.client_phone}
@@ -142,7 +142,7 @@ PAX (the AI accountability companion) will introduce themselves once you're done
             disabled={loading}
             className="w-full bg-red text-white font-semibold tracking-wider uppercase text-xs py-3.5 rounded hover:bg-red-deep transition-colors disabled:opacity-50"
           >
-            {loading ? 'Generating...' : 'Generate invite link →'}
+            {loading ? 'Making the link…' : 'Make invite link'}
           </button>
         </form>
       ) : (
@@ -174,30 +174,19 @@ PAX (the AI accountability companion) will introduce themselves once you're done
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-4">
               <button
                 onClick={copyLink}
-                className="flex items-center justify-center gap-2 bg-blue text-white font-semibold tracking-wider uppercase text-xs py-3 rounded hover:bg-blue-light transition-colors"
+                className="min-h-[44px] flex items-center justify-center gap-2 bg-blue text-white font-semibold text-sm rounded hover:bg-blue-light transition-colors"
               >
-                {copied ? '✓ Copied' : 'Copy link'}
+                {copied ? 'Copied' : 'Copy link'}
               </button>
-
-              {invite.client_phone ? (
-                <a
-                  href={whatsappShareUrl()}
-                  target="_blank"
-                  rel="noopener"
-                  className="flex items-center justify-center gap-2 bg-red text-white font-semibold tracking-wider uppercase text-xs py-3 rounded hover:bg-red-deep transition-colors"
-                >
-                  Send via WhatsApp →
-                </a>
-              ) : (
-                <a
-                  href={`https://wa.me/?text=${encodeURIComponent(`You're invited to join my coaching on PACT.Health. Set up your profile here: ${invite.invite_url}`)}`}
-                  target="_blank"
-                  rel="noopener"
-                  className="flex items-center justify-center gap-2 bg-red text-white font-semibold tracking-wider uppercase text-xs py-3 rounded hover:bg-red-deep transition-colors"
-                >
-                  Share via WhatsApp →
-                </a>
-              )}
+              <a href={smsUrl()} className="min-h-[44px] flex items-center justify-center gap-2 bg-red text-white font-semibold text-sm rounded hover:bg-red-deep transition-colors">
+                Send by text
+              </a>
+              <a href={mailUrl()} className="min-h-[44px] flex items-center justify-center gap-2 bg-white border border-border text-blue font-semibold text-sm rounded hover:border-blue transition-colors">
+                Send by email
+              </a>
+              <a href={waUrl()} target="_blank" rel="noopener" className="min-h-[44px] flex items-center justify-center gap-2 bg-white border border-border text-blue font-semibold text-sm rounded hover:border-blue transition-colors">
+                Send on WhatsApp
+              </a>
             </div>
           </div>
 
@@ -205,7 +194,7 @@ PAX (the AI accountability companion) will introduce themselves once you're done
             onClick={reset}
             className="text-xs font-semibold tracking-wider uppercase text-muted hover:text-red transition-colors"
           >
-            ← Generate another invite
+            ← Invite someone else
           </button>
         </div>
       )}

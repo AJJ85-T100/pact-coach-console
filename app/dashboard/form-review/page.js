@@ -25,8 +25,8 @@ export default function FormReviewPage() {
     const d = await res.json().catch(() => ({}));
     if (res.ok && (notes[id] || '').trim()) {
       setFlash(d.relayed === true
-        ? 'Reviewed — PAX is delivering your feedback on WhatsApp.'
-        : 'Reviewed and saved. WhatsApp delivery didn’t go through — the note is still on file.');
+        ? 'Reviewed. PAX is passing your feedback on.'
+        : 'Reviewed and saved. It couldn’t be sent just now, but the note is on file.');
     }
     load();
   }
@@ -35,10 +35,10 @@ export default function FormReviewPage() {
   const reviewed = (clips || []).filter((c) => c.status !== 'pending');
 
   return (
-    <div className="p-8 max-w-4xl">
+    <div className="px-4 sm:px-8 py-6 sm:py-8 max-w-4xl">
       <p className="text-xs font-semibold text-red tracking-[0.2em] uppercase mb-1">Form check</p>
       <h1 className="font-display font-extrabold text-blue text-3xl uppercase tracking-tight mb-1">Form review</h1>
-      <p className="text-body text-sm mb-8">Clips athletes send from the workout logger. Watch, reply, done — PAX delivers your feedback on WhatsApp.</p>
+      <p className="text-body text-sm mb-8">Clips athletes send from the workout logger. Watch, reply, done. PAX passes your feedback on.</p>
 
       {flash && (
         <div className="rounded px-4 py-3 text-sm mb-6 bg-emerald-50 border border-emerald-200 text-emerald-700">

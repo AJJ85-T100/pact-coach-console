@@ -3,14 +3,15 @@ import { createClient, createServiceClient } from '@/lib/supabase/server';
 import VoiceCalibration from '@/components/VoiceCalibration';
 import CalendarConnect from '@/components/CalendarConnect';
 import CoachRules from '@/components/CoachRules';
-import V2Roster from '@/components/V2Roster';
 import EscalationAlerts from '@/components/EscalationAlerts';
 import BusinessSettings from '@/components/BusinessSettings';
 import ConnectClaude from '@/components/ConnectClaude';
 
 /**
- * /dashboard/settings — coach settings, leading with voice calibration.
- * "Would your clients believe it's you?" — this page is where that's won.
+ * /dashboard/settings — settings that apply to the whole roster, leading with
+ * voice calibration, with jump links so a coach on a phone isn't scrolling
+ * one long page. (The PACT V2 on/off switch went in the Oct 2026 tidy-up:
+ * every athlete is on the engine and the classic bot is being retired.)
  */
 export default async function SettingsPage() {
   const supabase = createClient();
@@ -25,65 +26,66 @@ export default async function SettingsPage() {
     .maybeSingle();
   if (!pt) redirect('/login');
 
+  const H2 = 'font-display font-extrabold text-blue text-xl uppercase tracking-tight';
+  const LEAD = 'text-muted text-sm mt-1.5 leading-relaxed max-w-xl';
+  const SECTIONS = [
+    ['voice', 'Voice'], ['rules', 'Rules'], ['alerts', 'Alerts'], ['calendar', 'Calendar'], ['business', 'Business'], ['claude', 'Claude'],
+  ];
+
   return (
-    <div className="p-6 sm:p-8 max-w-2xl">
-      <div className="mb-6">
-        <h1 className="font-display font-extrabold text-blue text-2xl uppercase tracking-tight">Your voice</h1>
-        <p className="text-muted text-sm mt-1.5 leading-relaxed max-w-xl">
-          PAX speaks to your clients as an extension of you — between your sessions, in your style.
-          Teach it how you talk, hear a sample, and save. It applies to every message from the next one sent.
-        </p>
+    <div className="px-4 sm:px-8 py-6 sm:py-8 max-w-2xl">
+      <div className="mb-4">
+        <h1 className="font-display font-extrabold text-blue text-3xl uppercase tracking-tight">Settings</h1>
+        <p className="text-muted text-sm mt-1.5">These apply to every athlete on your roster. Per-athlete targets, focus and fees are on each athlete’s Settings tab.</p>
       </div>
-      <VoiceCalibration initial={pt.voice_calibration} />
+      <nav aria-label="Settings sections" className="sticky top-0 z-10 -mx-4 sm:mx-0 px-4 sm:px-0 py-2 mb-6 bg-bg flex gap-2 overflow-x-auto">
+        {SECTIONS.map(([id, label]) => (
+          <a key={id} href={`#${id}`} className="shrink-0 min-h-[40px] inline-flex items-center px-3 border border-border bg-white text-[14px] font-semibold text-blue hover:border-blue">{label}</a>
+        ))}
+      </nav>
 
-      <div className="mt-10 mb-4">
-        <h2 className="font-display font-extrabold text-blue text-xl uppercase tracking-tight">Your rules</h2>
-        <p className="text-muted text-sm mt-1.5 leading-relaxed max-w-xl">
-          The boundaries PAX works inside: when it messages, how often, what it never raises, and whether you approve first.
+      <section id="voice" className="scroll-mt-16">
+        <h2 className={H2}>Your voice</h2>
+        <p className={LEAD}>
+          PAX writes to your athletes as an extension of you, between sessions, in your style.
+          Teach it how you talk, hear a sample, and save. It applies from the next message.
         </p>
-      </div>
-      <CoachRules />
+        <div className="mt-4"><VoiceCalibration initial={pt.voice_calibration} /></div>
+      </section>
 
-      <div className="mt-10 mb-4" id="alerts">
-        <h2 className="font-display font-extrabold text-blue text-xl uppercase tracking-tight">Escalation alerts</h2>
-        <p className="text-muted text-sm mt-1.5 leading-relaxed max-w-xl">
-          When an athlete says something PAX mustn’t handle alone, it sends them a holding message and tells you. Get that on your phone, not just on Today.
+      <section id="rules" className="mt-10 scroll-mt-16">
+        <h2 className={H2}>Your rules</h2>
+        <p className={LEAD}>When PAX messages, how often, what it never raises, and whether you approve first.</p>
+        <div className="mt-4"><CoachRules /></div>
+      </section>
+
+      <section id="alerts" className="mt-10 scroll-mt-16">
+        <h2 className={H2}>Alerts on your phone</h2>
+        <p className={LEAD}>
+          When an athlete says something PAX mustn’t handle alone, PAX sends them a holding message and tells you. Get that on your phone, not just on My Day.
         </p>
-      </div>
-      <EscalationAlerts />
+        <div className="mt-4"><EscalationAlerts /></div>
+      </section>
 
-      <div className="mt-10 mb-4" id="claude">
-        <h2 className="font-display font-extrabold text-blue text-xl uppercase tracking-tight">Connect Claude</h2>
-        <p className="text-muted text-sm mt-1.5 leading-relaxed max-w-xl">
+      <section id="calendar" className="mt-10 scroll-mt-16">
+        <h2 className={H2}>Your calendar</h2>
+        <p className={LEAD}>Sessions you book on an athlete’s Sessions tab go straight into your diary.</p>
+        <div className="mt-4"><CalendarConnect /></div>
+      </section>
+
+      <section id="business" className="mt-10 scroll-mt-16">
+        <h2 className={H2}>Business</h2>
+        <p className={LEAD}>Your numbers before PACT, so My Day can show what it keeps. Only you see these.</p>
+        <div className="mt-4"><BusinessSettings /></div>
+      </section>
+
+      <section id="claude" className="mt-10 scroll-mt-16">
+        <h2 className={H2}>Connect Claude</h2>
+        <p className={LEAD}>
           Ask Claude about your roster in plain English. It reads the same live data as this console, and never sees what your athletes typed.
         </p>
-      </div>
-      <ConnectClaude />
-
-      <div className="mt-10 mb-4" id="business">
-        <h2 className="font-display font-extrabold text-blue text-xl uppercase tracking-tight">Business</h2>
-        <p className="text-muted text-sm mt-1.5 leading-relaxed max-w-xl">
-          Your numbers before PACT, so Today can show what it keeps. Only you see these.
-        </p>
-      </div>
-      <BusinessSettings />
-
-      <div className="mt-10 mb-4">
-        <h2 className="font-display font-extrabold text-blue text-xl uppercase tracking-tight">PACT V2 athletes</h2>
-        <p className="text-muted text-sm mt-1.5 leading-relaxed max-w-xl">
-          Switch an athlete on and PACT V2 writes their daily messages from their wearables and plan, and answers their replies. Off, and the classic bot carries on as before.
-          Athletes need to have consented first; send them the link from Needs you today.
-        </p>
-      </div>
-      <V2Roster />
-
-      <div className="mt-10 mb-4">
-        <h2 className="font-display font-extrabold text-blue text-xl uppercase tracking-tight">Your calendar</h2>
-        <p className="text-muted text-sm mt-1.5 leading-relaxed max-w-xl">
-          Sessions you schedule on the Briefs board can go straight into your diary.
-        </p>
-      </div>
-      <CalendarConnect />
+        <div className="mt-4"><ConnectClaude /></div>
+      </section>
     </div>
   );
 }
