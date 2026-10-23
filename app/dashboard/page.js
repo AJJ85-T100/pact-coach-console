@@ -1,7 +1,7 @@
 import OutcomesPanel from '@/components/OutcomesPanel';
 import { TodayProvider } from '@/components/today/TodayContext';
 import {
-  TodayHeader, Escalations, Drafts, Drifting, ConsentNeeded, QueueClear, AutonomyCard, AutoLog,
+  TodayHeader, Escalations, Moves, Drafts, Drifting, ConsentNeeded, QueueClear, AutonomyCard, AutoLog,
 } from '@/components/today/TodayQueue';
 import { RevenueStrip, RosterToday, PaxToday, AthletesReplying, OnboardingFunnel } from '@/components/today/TodayCards';
 import s from '@/components/today/today.module.css';
@@ -160,6 +160,7 @@ export default async function TodayPage() {
           <div className={s.main}>
             <QueueClear />
             <Escalations />
+            <Moves />
             <Drafts />
             <div className={s.pair}>
               <Drifting />

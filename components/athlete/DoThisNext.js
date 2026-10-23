@@ -11,6 +11,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useNeedsYou, ago, humanAngle, SLOT } from '@/components/needs-you/useNeedsYou';
 import GoingQuiet from './GoingQuiet';
+import ProposedMove from '@/components/needs-you/ProposedMove';
 import s from './overview.module.css';
 
 const ESC_COLOR = { crisis: '#B42318', medical: '#B42318', eating: '#B42318', distress: '#B54708', pain: '#B54708', quit: '#0A2540' };
@@ -22,10 +23,12 @@ export default function DoThisNext({ clientId, firstName, conversationHref }) {
   const mine = (list) => (list || []).filter((x) => x.clientId === clientId);
   const escalations = mine(data?.escalations);
   const quiet = mine(data?.quiet)[0] || null;
+  // The Cortex's proposed move: on the quiet item, or on its own once the flag is handled.
+  const proposal = quiet?.proposal || mine(data?.moves)[0] || null;
   const drafts = mine(data?.drafts);
   const consent = mine(data?.needConsent)[0] || null;
   const drift = mine(data?.atRisk)[0] || null;
-  const count = escalations.length + (quiet ? 1 : 0) + drafts.length + (consent ? 1 : 0);
+  const count = escalations.length + (quiet ? 1 : 0) + (proposal && !quiet ? 1 : 0) + drafts.length + (consent ? 1 : 0);
   const loading = !data && !error;
   const name = firstName || 'this athlete';
 
@@ -55,13 +58,15 @@ export default function DoThisNext({ clientId, firstName, conversationHref }) {
   const label = escalations.length
     ? 'Needs you personally'
     : quiet
-      ? 'Going quiet'
+      ? (proposal ? 'Going quiet · a move to approve' : 'Going quiet')
+      : proposal
+        ? 'A move to approve'
       : drafts.length
         ? `PAX draft${drafts.length > 1 ? 's' : ''} · waiting for your approval`
         : 'Consent needed';
   // A quiet flag on its own is a signal to act on, not an alarm: the card
   // keeps the brand blue rather than the red alert border.
-  const quietOnly = count === 1 && !!quiet;
+  const quietOnly = count === 1 && !!(quiet || proposal);
 
   return (
     <section className={`${s.card} ${quietOnly ? s.cardQuiet : s.cardAlert}`} aria-labelledby="ov-next" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -97,6 +102,12 @@ export default function DoThisNext({ clientId, firstName, conversationHref }) {
           onHandled={() => act(quiet.id, { kind: 'escalation', action: 'handled' })}
           conversationHref={conversationHref}
         />
+      )}
+
+      {proposal && (
+        <div style={{ borderTop: '1px solid #EEF1F5', paddingTop: 14 }}>
+          <ProposedMove item={proposal} busy={!!busy[proposal.id]} act={act} styles={s} quoteClass={s.quote} />
+        </div>
       )}
 
       {drafts.map((d) => {

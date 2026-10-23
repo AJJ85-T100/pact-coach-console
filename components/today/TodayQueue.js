@@ -10,6 +10,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { ago, humanAngle, SLOT } from '@/components/needs-you/useNeedsYou';
+import ProposedMove from '@/components/needs-you/ProposedMove';
 import { useToday } from './TodayContext';
 import s from './today.module.css';
 
@@ -64,6 +65,39 @@ export function Escalations() {
           </div>
         </div>
       ))}
+    </section>
+  );
+}
+
+/**
+ * Proposed moves — the Cortex's one move a night for each athlete going
+ * quiet, held for the coach. Approve, edit or bin; nothing reaches the
+ * athlete first. Two asks with nothing back make the next one a note in the
+ * coach's own name.
+ */
+export function Moves() {
+  const { data, busy, act, error } = useToday();
+  const list = data?.moves || [];
+  if (!list.length) return null;
+  const quietBy = Object.fromEntries((data?.quiet || []).map((q) => [q.clientId, q]));
+  return (
+    <section className={s.card} aria-labelledby="t-moves">
+      <h2 id="t-moves" className={s.h2}>Going quiet · proposed moves <Count n={list.length} /></h2>
+      <p className={s.why} style={{ marginTop: 4 }}>One small move a night for an athlete going quiet, chosen from what has landed for them and for your roster. Nothing goes out until you send it.</p>
+      {error && <p className={s.err} role="alert">{error}</p>}
+      {list.map((m, i) => {
+        const q = quietBy[m.clientId];
+        return (
+          <div key={m.id} className={s.item} style={{ animationDelay: `${0.05 + i * 0.07}s`, display: 'block' }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+              <Link className={s.who} href={href(m.clientId)}>{m.athlete}</Link>
+              {q && <span className={s.why} style={{ margin: 0 }}>{q.headline}{q.evidence ? ` · ${q.evidence}` : ''}</span>}
+              {!q && <span className={s.why} style={{ margin: 0 }}>{ago(m.at)}</span>}
+            </div>
+            <ProposedMove item={m} busy={!!busy[m.id]} act={act} styles={s} quoteClass={s.draft} />
+          </div>
+        );
+      })}
     </section>
   );
 }

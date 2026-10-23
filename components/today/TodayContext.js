@@ -94,7 +94,7 @@ export function TodayProvider({ drifting = [], hasState = false, children }) {
       ? drifting.map((x) => ({ ...x, reason: reasonBy[x.clientId] || x.reason }))
       : engineRisk.map((a) => ({ clientId: a.clientId, athlete: a.athlete, score: null, reason: (a.reasons || []).join(' · ') }));
     const count = d
-      ? (d.escalations?.length || 0) + (d.drafts?.length || 0) + (d.needConsent?.length || 0) + driftList.length + suggestions.length
+      ? (d.escalations?.length || 0) + (d.moves?.length || 0) + (d.drafts?.length || 0) + (d.needConsent?.length || 0) + driftList.length + suggestions.length
       : null;
     return { ...needs, autonomy: { ...auto, suggestions, routine, labelOf, dismiss, setAngleAuto, busy: autoBusy, msg: autoMsg }, driftList, count };
   }, [needs, auto, dismissed, drifting, hasState, dismiss, setAngleAuto, autoBusy, autoMsg]);

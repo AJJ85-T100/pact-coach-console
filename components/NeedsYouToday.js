@@ -20,6 +20,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import NudgeTool from '@/components/NudgeTool';
+import ProposedMove from '@/components/needs-you/ProposedMove';
 import { useNeedsYou, ago, humanAngle, quietSignalLabel, SLOT } from '@/components/needs-you/useNeedsYou';
 
 const TONE = {
@@ -123,6 +124,11 @@ export default function NeedsYouToday() {
               </button>
             </div>
           </div>
+          {q.proposal && (
+            <div className="mt-4 border-t border-border pt-4">
+              <ProposedMove item={q.proposal} busy={!!busy[q.proposal.id]} act={act} styles={{ btn: 'text-xs font-semibold px-3 py-2 rounded border border-border text-blue hover:border-blue', btnRed: '!bg-red !text-white !border-red hover:!bg-red-deep disabled:opacity-50', btnGhost: '!text-muted hover:!text-red', tag: 'text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded bg-bg-alt', textarea: 'mt-2 w-full text-sm text-body border border-border rounded p-3 focus:outline-none focus:border-blue' }} quoteClass="text-sm text-body whitespace-pre-line border-l-2 border-border pl-3" />
+            </div>
+          )}
           {messaging[q.id] && (
             <div className="mt-4">
               <NudgeTool clientId={q.clientId} clientFirstName={(q.athlete || '').split(' ')[0]} />
