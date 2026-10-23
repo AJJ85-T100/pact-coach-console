@@ -1,4 +1,5 @@
 import OutcomesPanel from '@/components/OutcomesPanel';
+import RetentionPanel from '@/components/RetentionPanel';
 import { TodayProvider } from '@/components/today/TodayContext';
 import {
   TodayHeader, Escalations, Moves, Drafts, Drifting, ConsentNeeded, QueueClear, AutonomyCard, AutoLog,
@@ -179,6 +180,7 @@ export default async function TodayPage() {
         </div>
 
         <div id="whats-working">
+          <RetentionPanel />
           <OutcomesPanel />
         </div>
       </div>
